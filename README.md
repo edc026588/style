@@ -41,7 +41,7 @@ Desktop browsers with a keyboard and mouse give the best experience. Phones and 
 - **Kill streaks:** a 3-kill streak starts a 30-second UAV sweep that reveals every hostile on the radar. A 6-kill streak earns an airstrike: a jet flies over and drops a line of seven bombs. The streak resets if you drop to critical health.
 - **HUD:** a rotating radar that shows enemies when they fire, a heading compass, a kill feed, score pop-ups (headshot, longshot, double and triple kill), a dynamic crosshair that turns red over enemies, damage-direction arcs, a low-health vignette and heartbeat, and an ammo readout.
 - **Waves.** Each wave is bigger and adds tougher enemy types. Between waves you get a resupply, and enemies drop ammo crates. Your best score is saved in the browser.
-- **Visuals:** a procedural sky with clouds and a low sun, sun shadows, image-based lighting, fog and distant mountains, burning wrecks with fire light and smoke, drifting dust, and film grain.
+- **Visuals:** HDR rendering with bloom, sun shafts, ACES tone mapping, a cinematic color grade, chromatic aberration and film grain. Surfaces use generated normal maps, and the ground has large-scale color variation to hide tiling. Soft contact shadows sit under every object, and sun shadows follow the player. The scene also has swaying grass, rocks, balconies, wall units, sagging power cables, a procedural sky with clouds, fog and distant mountains, burning wrecks with noise-textured smoke, and drifting dust. The `Low` graphics setting skips post-processing for slower devices.
 
 ## Files
 
