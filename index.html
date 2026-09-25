@@ -330,11 +330,12 @@ body.touch #killfeed { top: max(116px, calc(env(safe-area-inset-top, 0px) + 108p
     <div class="field"><label for="set-fov">Field of view</label><output id="out-fov">78°</output><input id="set-fov" type="range" min="65" max="100" step="1"></div>
     <div class="field"><label for="set-vol">Volume</label><output id="out-vol">80%</output><input id="set-vol" type="range" min="0" max="1" step="0.05"></div>
     <div class="field"><label for="set-quality">Graphics</label><output></output>
-      <select id="set-quality"><option value="high">High · shadows, full resolution</option><option value="low">Low · faster on laptops and phones</option></select></div>
+      <select id="set-quality"><option value="ultra">Ultra · ambient occlusion, sharpest shadows</option><option value="high">High · post-processing, shadows</option><option value="low">Low · faster on laptops and phones</option></select></div>
     <div class="actions"><button id="btn-settings-done" class="btn primary" type="button">Done</button></div>
   </div>
 </section>
 
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 <script type="module" src="./game.js"></script>
 </body>
 </html>

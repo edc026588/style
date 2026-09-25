@@ -41,13 +41,26 @@ Desktop browsers with a keyboard and mouse give the best experience. Phones and 
 - **Kill streaks:** a 3-kill streak starts a 30-second UAV sweep that reveals every hostile on the radar. A 6-kill streak earns an airstrike: a jet flies over and drops a line of seven bombs. The streak resets if you drop to critical health.
 - **HUD:** a rotating radar that shows enemies when they fire, a heading compass, a kill feed, score pop-ups (headshot, longshot, double and triple kill), a dynamic crosshair that turns red over enemies, damage-direction arcs, a low-health vignette and heartbeat, and an ammo readout.
 - **Waves.** Each wave is bigger and adds tougher enemy types. Between waves you get a resupply, and enemies drop ammo crates. Your best score is saved in the browser.
-- **Visuals:** HDR rendering with bloom, sun shafts, ACES tone mapping, a cinematic color grade, chromatic aberration and film grain. Surfaces use generated normal maps, and the ground has large-scale color variation to hide tiling. Soft contact shadows sit under every object, and sun shadows follow the player. The scene also has swaying grass, rocks, balconies, wall units, sagging power cables, a procedural sky with clouds, fog and distant mountains, burning wrecks with noise-textured smoke, and drifting dust. The `Low` graphics setting skips post-processing for slower devices.
+- **Visuals:**
+  - **Sky and air:** a physically based sky (Preetham scattering) with lit clouds. Height fog thins with altitude and glows toward the sun, so distant ridges fade the way they would in real haze.
+  - **Lighting:** ambient light and reflections come from a capture of the compound itself, so warm light bouncing off the sand shows up in metal and shadows. Bloom, sun shafts, ACES tone mapping and a restrained color grade finish the frame.
+  - **Surfaces:** every surface is generated from tileable noise, with its own albedo, normal and roughness maps. That covers wind-rippled sand, stucco with reflective windows, cracked asphalt with worn lane paint, formed concrete, rusted containers, wood grain and sandbag fabric. Walls get dirtier near the ground, and a world-space tint keeps repeated buildings from looking identical.
+  - **Soldiers:** enemies are a rigged, animated soldier. Idle, walk and run animations blend by speed, and two-bone IK keeps both hands on the rifle while they aim at you.
+  - **Shadows and occlusion:** Ultra adds screen-space ambient occlusion and 4096 sun shadows. Every quality level has soft contact shadows under objects.
+  - **Impacts:** bullet hits depend on the surface: sparks off metal, splinters off wood, puffs of sand, and grit and dust off stone.
+  - **Scene detail:** swaying grass, natural rocks, balconies, power cables, burning wrecks with billowing smoke, and drifting dust.
+  - **Quality levels:** there are three, `Ultra`, `High` and `Low`. If the first seconds of a deployment run slowly, the game steps down a level automatically.
 
 ## Files
 
-- `index.html` contains the page, the menus and the HUD markup and styles.
+- `index.html` contains the page, the menus and the HUD markup and styles, plus the import map for three.js.
 - `game.js` contains the whole game: renderer, world, physics, AI, weapons, audio and HUD drawing.
+- `assets/soldier.glb` is the enemy soldier model.
+
+## Credits
+
+The soldier model (`assets/soldier.glb`, Mixamo's "Vanguard" character with its animations) comes from the [three.js examples](https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf). The model is Mixamo content, so check [Adobe's Mixamo terms](https://helpx.adobe.com/creative-cloud/faq/mixamo-faq.html) before redistributing it on its own. If `assets/soldier.glb` is missing, the game falls back to its built-in soldiers. Everything else is generated in code.
 
 ## Settings
 
-Look sensitivity, field of view, volume and graphics quality (`High` has shadows and full resolution; `Low` is lighter for laptops and phones) are in the Settings menu and saved per browser.
+Look sensitivity, field of view, volume and graphics quality are in the Settings menu and saved per browser. For graphics, `Ultra` adds ambient occlusion and the sharpest shadows, `High` has full post-processing, and `Low` skips post-processing for phones and older laptops.
