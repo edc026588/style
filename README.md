@@ -83,3 +83,7 @@ Look sensitivity, field of view, volume and graphics quality are in the Settings
 ## Taiwan Strait Battleship
 
 A second game lives in [`battleship/`](battleship/index.html): classic Battleship set in the Taiwan Strait. Command the Allied Coalition (Taiwan, the US and Japan) or the PLA Navy against a computer opponent on Commander or Admiral difficulty. Each side has one special: the coalition's P-8A Poseidon sweep reveals ships in a 3×3 area, and the PLA's DF-21D salvo strikes five squares in a cross. It's a single HTML file with no dependencies beyond Google Fonts; open `battleship/index.html` directly or through the same local server.
+
+## Strait Fire
+
+A real-time naval action game in [`strait-action/`](strait-action/index.html), set on the same Taiwan Strait. You captain ROCS Kee Lung for the Allied Coalition or the Type 055 Nanchang for the PLA Navy, and fight off endless waves of frigates, destroyers, submarines, carrier groups and strike jets with your gun, homing anti-ship missiles and a side-specific special (Harpoon salvo or DF-21D strike). Allied AI ships fight alongside you, and the Penghu, Kinmen and Matsu islands block both ships and shells. Keyboard and mouse on desktop; a virtual stick and buttons on touch screens. Single HTML file, sound synthesized in the browser.
