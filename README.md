@@ -79,3 +79,7 @@ The soldier model (`assets/soldier.glb`, Mixamo's "Vanguard" character with its 
 ## Settings
 
 Look sensitivity, field of view, volume and graphics quality are in the Settings menu and saved per browser. For graphics, `Ultra` adds ambient occlusion and the sharpest shadows, `High` has full post-processing, and `Low` skips post-processing for phones and older laptops.
+
+## Taiwan Strait Battleship
+
+A second game lives in [`battleship/`](battleship/index.html): classic Battleship set in the Taiwan Strait. Command the Allied Coalition (Taiwan, the US and Japan) or the PLA Navy against a computer opponent on Commander or Admiral difficulty. Each side has one special: the coalition's P-8A Poseidon sweep reveals ships in a 3×3 area, and the PLA's DF-21D salvo strikes five squares in a cross. It's a single HTML file with no dependencies beyond Google Fonts; open `battleship/index.html` directly or through the same local server.
