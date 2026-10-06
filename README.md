@@ -1,6 +1,6 @@
 # Operation Ironveil
 
-A first-person shooter for the browser, in the spirit of Call of Duty. You hold a dawn-lit desert compound against waves of attackers, using four weapons, frag grenades and kill-streak rewards. It's built with [three.js](https://threejs.org). There are no image or sound files: every texture, model and sound is generated in code.
+A first-person shooter for the browser, in the spirit of Call of Duty. You fight through five operations on five different maps, using four weapons, frag grenades and kill-streak rewards. It's built with [three.js](https://threejs.org). There are no image or sound files: every texture, model and sound is generated in code.
 
 ## Play
 
@@ -36,15 +36,15 @@ Desktop browsers with a keyboard and mouse give the best experience. Phones and 
 
 ## Campaign
 
-Five operations on the Kessar Compound, each with its own time of day, weather and objectives. The operation select screen tracks which you have completed and your best times.
+Five operations, each on its own map with its own time of day, weather and objectives. The operation select screen tracks which you have completed and your best times.
 
-| # | Operation | Conditions | Objectives |
-| --- | --- | --- | --- |
-| 1 | Ironveil | Dawn | Survive endless assault waves |
-| 2 | Dust Devil | Noon sandstorm, short visibility | Plant charges on three SAM launchers, then reach the extraction helicopter |
-| 3 | Black Sand | Night | Recover an intel case past guards with flashlights, then extract. Guards notice you less at night, and less still while you crouch. Taking the case or getting spotted raises the alarm. |
-| 4 | Kingpin | Thunderstorm | Kill the Jackal before he escapes to his convoy, then extract. He is guarded by Juggernauts and flees once alerted. |
-| 5 | Last Light | Sunset | Keep a field uplink alive for three minutes while enemies attack it |
+| # | Operation | Map | Conditions | Objectives |
+| --- | --- | --- | --- | --- |
+| 1 | Ironveil | Kessar Compound, a walled desert town | Dawn | Survive endless assault waves |
+| 2 | Dust Devil | Wadi Kesh Airfield: runway, hangars, fuel trucks and a control tower | Noon sandstorm, short visibility | Plant charges on three SAM launchers, then reach the extraction helicopter |
+| 3 | Black Sand | Port Tamar: container yard, gantry cranes, a docked freighter and the harbour lit by floodlights | Night | Recover an intel case past guards with flashlights, then extract. Guards notice you less at night, and less still while you crouch. Taking the case or getting spotted raises the alarm. |
+| 4 | Kingpin | Shirin Dara, a green mountain village with cobbled lanes, a church bell tower and pine forest | Thunderstorm | Kill the Jackal before he escapes to his convoy, then extract. He is guarded by Juggernauts and flees once alerted. |
+| 5 | Last Light | Haddar, a ruined city with bombed concrete blocks, a collapsed highway and burning buses | Sunset | Keep a field uplink alive for three minutes while enemies attack it |
 
 
 - **Four weapons, each with its own handling.** AR-7 carbine (red dot), VK-9 suppressed SMG (holographic sight), Brecher-12 pump shotgun (iron sights) and Longbow .338 bolt-action sniper (full scope overlay). Each has its own recoil, spread bloom, damage falloff, ADS zoom, reload animation and synthesized sound. The viewmodels include hands, shell ejection, weapon bob, sway, sprint pose, pump and bolt cycling, and magazine swaps.

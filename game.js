@@ -16,7 +16,7 @@ const ease = (t) => t * t * (3 - 2 * t);
 const wrapAngle = (a) => { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; };
 const dampAngle = (a, b, l, dt) => a + wrapAngle(b - a) * (1 - Math.exp(-l * dt));
 function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-const srand = mulberry32(417);
+let srand = mulberry32(417);
 const srange = (a, b) => a + srand() * (b - a);
 
 const IS_TOUCH = matchMedia('(pointer: coarse)').matches && 'ontouchstart' in window;
@@ -473,6 +473,74 @@ PBR.wear = pbrTex(256, (u, v, o) => {
   const t = 0.92 + n * 0.08 + s * 0.08;
   setC(o, t, t, t); o.h = n * 0.3 - s * 0.2; o.rough = clamp(0.5 + (n - 0.5) * 0.5 - s * 0.25, 0.1, 1);
 }, { normal: 1.5 });
+PBR.dirt = pbrTex(512, (u, v, o) => {
+  const [a, b, c, d] = NZ;
+  const big = a(u, v, 3, 3, 5), mid = b(u, v, 12, 12, 4), fine = c(u, v, 96, 96, 2);
+  const grass = sstep(0.45, 0.62, big + (mid - 0.5) * 0.4);
+  const puddle = sstep(0.7, 0.76, d(u, v, 4, 4, 4)) * (1 - grass);
+  const pebble = sstep(0.78, 0.84, b(u + 0.3, v, 48, 48, 2)) * (1 - grass);
+  let r = lerp(0.36, 0.25, grass), g = lerp(0.29, 0.33, grass), bl = lerp(0.21, 0.15, grass);
+  const t = 0.8 + mid * 0.35 + (fine - 0.5) * 0.25; r *= t; g *= t; bl *= t;
+  r = lerp(r, 0.45, pebble); g = lerp(g, 0.43, pebble); bl = lerp(bl, 0.4, pebble);
+  r *= 1 - puddle * 0.45; g *= 1 - puddle * 0.42; bl *= 1 - puddle * 0.35;
+  setC(o, r, g, bl);
+  o.h = fine * 0.35 + mid * 0.3 + grass * 0.25 * fine + pebble * 0.4 - puddle * 0.3;
+  o.rough = lerp(0.93, 0.25, puddle);
+}, { repeat: 90, normal: 4 });
+PBR.cobble = pbrTex(256, (u, v, o) => {
+  const [, b, c] = NZ;
+  const row = Math.floor(v * 8), rv = (v * 8) % 1;
+  const uu = u * 6 + (row % 2) * 0.5, col = Math.floor(uu), ru = uu - col;
+  const dx = Math.max(0, Math.abs(ru - 0.5) - 0.34) / 0.16, dy = Math.max(0, Math.abs(rv - 0.5) - 0.3) / 0.2;
+  const dd = Math.min(1, Math.hypot(dx, dy)), mortar = dd >= 0.999;
+  const id = (((row * 31 + (col % 6) * 17) % 13) / 13);
+  const t = (0.36 + id * 0.18 + b(u, v, 32, 32, 3) * 0.12) * (0.6 + 0.4 * Math.sqrt(1 - dd));
+  setC(o, mortar ? 0.2 : t, mortar ? 0.19 : t * 0.97, mortar ? 0.17 : t * 0.92);
+  o.h = Math.sqrt(1 - dd) * 0.8 + c(u, v, 64, 64, 2) * 0.1; o.rough = mortar ? 0.95 : 0.72 - id * 0.15;
+}, { normal: 6 });
+PBR.stone = pbrTex(512, (u, v, o) => {
+  const [a] = NZ;
+  const row = Math.floor(v * 10), rv = (v * 10) % 1;
+  const cols = 4 + (row * 7) % 3, uu = u * cols + ((row * 0.618) % 1), col = Math.floor(uu), ru = uu - col;
+  const dx = Math.max(0, Math.abs(ru - 0.5) - 0.42) / 0.08, dy = Math.max(0, Math.abs(rv - 0.5) - 0.36) / 0.14;
+  const dd = Math.min(1, Math.hypot(dx, dy)), mortar = dd >= 0.999;
+  const id = (((row * 13 + (col % cols) * 7) % 11) / 11), st = a(u, v, 24, 24, 4);
+  const t = mortar ? 0.42 : (0.5 + id * 0.22 + st * 0.18) * (0.75 + 0.25 * (1 - dd));
+  setC(o, t, t * 0.95, t * 0.86);
+  o.h = mortar ? 0.1 : 0.55 + (1 - dd) * 0.3 + st * 0.2; o.rough = 0.92;
+}, { normal: 6 });
+PBR.tiles = pbrTex(256, (u, v, o) => {
+  const [a, b] = NZ;
+  const row = Math.floor(v * 10), rv = (v * 10) % 1;
+  const prof = Math.abs(Math.sin((u * 8 + (row % 2) * 0.5) * Math.PI)), lap = sstep(0, 0.25, rv);
+  const t = (0.55 + a(u, v, 8, 8, 3) * 0.3) * (0.6 + prof * 0.4) * (0.7 + 0.3 * lap);
+  const moss = sstep(0.62, 0.75, b(u, v, 6, 6, 4));
+  setC(o, lerp(t * 0.8, 0.3, moss), lerp(t * 0.38, 0.33, moss), lerp(t * 0.25, 0.2, moss));
+  o.h = prof * 0.6 + lap * 0.3; o.rough = 0.8;
+}, { normal: 6 });
+PBR.asphalt = pbrTex(512, (u, v, o) => {
+  const [a, b, c] = NZ;
+  const agg = a(u, v, 96, 96, 3), big = b(u, v, 4, 4, 4), crack = sstep(0.972, 0.992, ridge(c(u, v, 4, 4, 5)));
+  const g = 0.19 * (0.78 + 0.45 * big) + (agg - 0.5) * 0.1 - crack * 0.1;
+  setC(o, g, g, g * 1.02); o.h = agg * 0.22 - crack * 0.5; o.rough = 0.85 + crack * 0.1;
+}, { repeat: 70, normal: 2 });
+PBR.water = pbrTex(256, (u, v, o) => {
+  const [a] = NZ;
+  o.h = Math.sin((u * 6 + v * 2) * Math.PI * 2) * 0.25 + Math.sin((v * 7 - u * 3) * Math.PI * 2) * 0.2 + a(u, v, 8, 8, 4) * 0.6;
+  setC(o, 0.05, 0.09, 0.11); o.rough = 0.08;
+}, { normal: 3, repeat: 60 });
+TEX.fence = (() => {
+  const s = 128, c = document.createElement('canvas'); c.width = c.height = s;
+  const g = c.getContext('2d'); g.strokeStyle = '#fff'; g.lineWidth = 3;
+  for (let i = -s; i < s * 2; i += 32) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i + s, s); g.stroke(); g.beginPath(); g.moveTo(i + s, 0); g.lineTo(i, s); g.stroke(); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = maxAniso; return t;
+})();
+TEX.windows = (() => {
+  const s = 256, c = document.createElement('canvas'); c.width = c.height = s;
+  const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, s, s);
+  for (let y = 6; y < s; y += 16) for (let x = 6; x < s; x += 12) if (Math.random() < 0.3) { g.fillStyle = ['#ffcf7a', '#ffe0a8', '#c8e4ff'][Math.floor(Math.random() * 3)]; g.fillRect(x, y, 6, 8); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+})();
 TEX.macro = canvasTex(256, (g, s) => { g.fillStyle = '#808080'; g.fillRect(0, 0, s, s); blotches(g, s, 70, ['#ffffff', '#000000', '#a0a0a0', '#505050'], 18, 60, 0.16); }, { srgb: false });
 TEX.grass = canvasTex(128, (g, s) => {
   g.clearRect(0, 0, s, s);
@@ -539,8 +607,37 @@ for (const k of ['wallTan', 'wallOchre', 'wallGrey']) weathered(MAT[k], 0.4, 1.8
 for (const k of ['concrete', 'perimeter', 'barrier']) weathered(MAT[k], 0.35, 1.2, 0.18);
 const barrelMats = [0x9a3a2b, 0x345a7a, 0x56663d].map((c) => pbr(PBR.metal, { color: c, metalness: 0.45 }));
 const carMats = [0x9b9384, 0x5c6a73, 0x7c3a2e].map((c) => std({ color: c, roughness: 0.5, metalness: 0.5 }));
+Object.assign(MAT, {
+  dirt: pbr(PBR.dirt, { normalScale: new THREE.Vector2(1.1, 1.1) }),
+  asphalt: pbr(PBR.asphalt),
+  stone: weathered(pbr(PBR.stone, { color: 0xd8cbb4 }), 0.35, 1.4, 0.22),
+  tiles: pbr(PBR.tiles),
+  water: std({ color: 0x0d1d24, normalMap: PBR.water.normalMap, normalScale: new THREE.Vector2(0.55, 0.55), roughness: 0.05, metalness: 0.1, envMapIntensity: 1.3 }),
+  fence: std({ map: TEX.fence, alphaTest: 0.5, side: THREE.DoubleSide, color: 0x9ba1a6, metalness: 0.6, roughness: 0.45 }),
+  shed: weathered(pbr(containerSet(0x8d9399), { metalness: 0.4 }), 0.25, 1.2, 0.1),
+  white: pbr(PBR.metal, { color: 0xe8e4d8, metalness: 0.25 }),
+  crane: pbr(PBR.metal, { color: 0xd9962e, metalness: 0.35 }),
+  hull: pbr(PBR.metal, { color: 0x2a3036, metalness: 0.3 }),
+  hullRed: pbr(PBR.metal, { color: 0x7a2a22, metalness: 0.3 }),
+  pine: std({ color: 0x2c3d26, roughness: 1, flatShading: true }),
+  leafy: std({ color: 0x4a5e2c, roughness: 1, flatShading: true }),
+  bark: std({ color: 0x4a3a2c, roughness: 1 }),
+  cityLights: std({ color: 0x2a2c30, roughness: 0.9, emissive: 0xffffff, emissiveMap: TEX.windows, emissiveIntensity: 0.05 }),
+  cloth: [0x9a3a2e, 0x2e5f6a, 0xc09a3a, 0x5a6e3a].map((c) => std({ color: c, roughness: 0.95, side: THREE.DoubleSide })),
+  hay: std({ color: 0xc2a25a, roughness: 1 }),
+  ruinGrey: weathered(pbr(PBR.concrete, { color: 0xa9a59d }), 0.45, 2.2, 0.25),
+  ruinPale: weathered(pbr(PBR.concrete, { color: 0xcfc4b0 }), 0.45, 2.2, 0.25),
+  ruinDark: weathered(pbr(PBR.concrete, { color: 0x77736c }), 0.4, 2.0, 0.2),
+  skyline: std({ color: 0x5e5a56, roughness: 1 }),
+  lightPool: new THREE.MeshBasicMaterial({ map: TEX.puff, color: 0xffb868, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 }),
+});
 
 // ---------------------------------------------------------------- world geometry and colliders
+// Each map builds into WORLD so switching operations can tear the whole thing down.
+let WORLD = new THREE.Group();
+scene.add(WORLD);
+const MAP_LIGHTS = [];
+let fireLights = [];
 const colliders = [];
 function addCollider(x0, y0, z0, x1, y1, z1, surf = 'stone') { const c = { x0, y0, z0, x1, y1, z1, surf }; colliders.push(c); return c; }
 const SURF = new Map();
@@ -561,7 +658,7 @@ function addBox(x, y, z, w, h, d, mat, { tile = 0, collide = true, shadow = true
   const m = new THREE.Mesh(boxGeo(w, h, d, tile), mat);
   m.position.set(x, y + h / 2, z);
   m.castShadow = shadow; m.receiveShadow = true;
-  scene.add(m);
+  WORLD.add(m);
   if (collide) addCollider(x - w / 2, y, z - d / 2, x + w / 2, y + h, z + d / 2, surfOf(mat));
   return m;
 }
@@ -576,14 +673,14 @@ const FIRES = [];
 const PLAYER_START = new V3(5, 0, 12);
 
 const roadMats = [];
-function road(cx, cz, len, width, alongX) {
-  const [tex, nrm, rgh] = [PBR.road.map, PBR.road.normalMap, PBR.road.roughnessMap].map((t) => { const c = t.clone(); c.needsUpdate = true; c.repeat.set(len / width, 1); return c; });
+function road(cx, cz, len, width, alongX, set = PBR.road, tile = width) {
+  const [tex, nrm, rgh] = [set.map, set.normalMap, set.roughnessMap].map((t) => { const c = t.clone(); c.needsUpdate = true; c.repeat.set(len / tile, width / tile); return c; });
   const rm = std({ map: tex, normalMap: nrm, roughnessMap: rgh, roughness: 1 }); roadMats.push(rm);
   const m = new THREE.Mesh(new THREE.PlaneGeometry(len, width), rm);
   m.rotation.set(-Math.PI / 2, 0, alongX ? 0 : Math.PI / 2);
   m.position.set(cx, 0.02, cz);
   m.receiveShadow = true;
-  scene.add(m);
+  WORLD.add(m);
   radarRoads.push(alongX ? [cx - len / 2, cz - width / 2, len, width] : [cx - width / 2, cz - len / 2, width, len]);
 }
 function building(cx, cz, w, d, h, wallMat, { marksman = null } = {}) {
@@ -595,7 +692,7 @@ function building(cx, cz, w, d, h, wallMat, { marksman = null } = {}) {
   addBox(cx + w / 2 - t / 2, h, cz, t, ph, d - 2 * t, MAT.concrete, { tile: 3 });
   addBox(cx + w * 0.22, h, cz - d * 0.18, 1.5, 1.0, 1.1, MAT.metal);
   const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.4, 14), MAT.metal);
-  tank.position.set(cx - w * 0.25, h + 0.7, cz + d * 0.2); tank.castShadow = true; scene.add(tank);
+  tank.position.set(cx - w * 0.25, h + 0.7, cz + d * 0.2); tank.castShadow = true; WORLD.add(tank);
   addBox(cx - w * 0.2, 0, cz + d / 2 + 0.09, 1.5, 2.4, 0.08, MAT.door, { collide: false, shadow: false, ao: false });
   addBox(cx + w * 0.3, 0, cz - d / 2 - 0.09, 1.5, 2.4, 0.08, MAT.door, { collide: false, shadow: false, ao: false });
   const awn = addBox(cx - w * 0.2, 2.6, cz + d / 2 + 0.7, 2.4, 0.08, 1.4, std({ color: [0x7a2e26, 0x2e5a55, 0x8a6a2a][Math.floor(srand() * 3)], roughness: 0.9 }), { collide: false });
@@ -618,7 +715,7 @@ function building(cx, cz, w, d, h, wallMat, { marksman = null } = {}) {
     else addBox(cx + along * w, ay, cz + side * (d / 2 + 0.22), 0.85, 0.55, 0.44, MAT.metal, { collide: false });
   }
   const dish = new THREE.Mesh(new THREE.SphereGeometry(0.45, 14, 6, 0, Math.PI * 2, 0, 0.9), MAT.metal);
-  dish.position.set(cx - w * 0.3, h + 1.1, cz - d * 0.25); dish.rotation.set(-0.9, srange(0, 6), 0); dish.castShadow = true; scene.add(dish);
+  dish.position.set(cx - w * 0.3, h + 1.1, cz - d * 0.25); dish.rotation.set(-0.9, srange(0, 6), 0); dish.castShadow = true; WORLD.add(dish);
   if (marksman) MARKSMAN_SPOTS.push({ pos: new V3(marksman[0], h, marksman[1]), used: false });
 }
 function wallSeg(x0, z0, x1, z1, h = 2.4) {
@@ -633,7 +730,7 @@ function container(x, z, rot, mi, y = 0) {
 function crate(x, z, y = 0, s = 1.1) { addBox(x, y, z, s, s, s, MAT.crate); }
 function barrel(x, z, mi) {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 1.0, 14), barrelMats[mi % barrelMats.length]);
-  m.position.set(x, 0.5, z); m.castShadow = m.receiveShadow = true; scene.add(m);
+  m.position.set(x, 0.5, z); m.castShadow = m.receiveShadow = true; WORLD.add(m);
   addCollider(x - 0.34, 0, z - 0.34, x + 0.34, 1.0, z + 0.34, 'metal');
   addAO(x - 0.34, z - 0.34, x + 0.34, z + 0.34, 0.5);
 }
@@ -654,7 +751,7 @@ function car(x, z, alongX, burning, mi = 0) {
     const wm = new THREE.Mesh(wg, MAT.tire);
     wm.rotation.set(alongX ? Math.PI / 2 : 0, 0, alongX ? 0 : Math.PI / 2);
     wm.position.set(x + (alongX ? sx * 1.35 : sz * 0.85), 0.34, z + (alongX ? sz * 0.85 : sx * 1.35));
-    scene.add(wm);
+    WORLD.add(wm);
   }
   if (burning) FIRES.push(new V3(x, 1.2, z));
 }
@@ -669,8 +766,8 @@ const frondGeo = (() => {
 const crowns = [];
 function palm(x, z, h = 7) {
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.24, h, 8), MAT.trunk);
-  trunk.position.set(x, h / 2, z); trunk.castShadow = true; scene.add(trunk);
-  const crown = new THREE.Group(); crown.position.set(x, h, z); scene.add(crown); crowns.push(crown);
+  trunk.position.set(x, h / 2, z); trunk.castShadow = true; WORLD.add(trunk);
+  const crown = new THREE.Group(); crown.position.set(x, h, z); WORLD.add(crown); crowns.push(crown);
   for (let i = 0; i < 9; i++) {
     const f = new THREE.Mesh(frondGeo, MAT.leaf);
     f.rotation.order = 'YXZ';
@@ -682,17 +779,15 @@ function palm(x, z, h = 7) {
 }
 function lamp(x, z) {
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 6.5, 8), MAT.darkMetal);
-  pole.position.set(x, 3.25, z); pole.castShadow = true; scene.add(pole);
+  pole.position.set(x, 3.25, z); pole.castShadow = true; WORLD.add(pole);
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.14, 0.26), MAT.lamp);
-  head.position.set(x + (x > 0 ? -0.4 : 0.4), 6.45, z); scene.add(head);
+  head.position.set(x + (x > 0 ? -0.4 : 0.4), 6.45, z); WORLD.add(head);
   addCollider(x - 0.1, 0, z - 0.1, x + 0.1, 6.5, z + 0.1, 'metal');
 }
 
-function buildWorld() {
-  SURF.set(MAT.crate, 'wood'); SURF.set(MAT.sandbag, 'sand');
-  for (const m of [MAT.metal, MAT.darkMetal, MAT.burnt, MAT.glass, ...containerMats, ...barrelMats, ...carMats]) SURF.set(m, 'metal');
+function buildKessar() {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), MAT.sand);
-  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; WORLD.add(ground);
 
   road(0, 0, 124, 9, true);
   road(0, -25.25, 41.5, 9, false);
@@ -706,7 +801,7 @@ function buildWorld() {
   addBox(HALF + 0.5, 0, 0, 1, ph, 2 * HALF, MAT.perimeter, { tile: 4 });
   for (let i = -HALF; i <= HALF; i += 8) {
     for (const [x, z] of [[i, -HALF - 0.5], [i, HALF + 0.5], [-HALF - 0.5, i], [HALF + 0.5, i]]) {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(1.3, 5.2, 1.3), MAT.perimeter); post.position.set(x, 2.6, z); post.castShadow = true; scene.add(post);
+      const post = new THREE.Mesh(new THREE.BoxGeometry(1.3, 5.2, 1.3), MAT.perimeter); post.position.set(x, 2.6, z); post.castShadow = true; WORLD.add(post);
     }
   }
 
@@ -797,15 +892,12 @@ function buildWorld() {
     const w = srange(6, 16), h = Math.round(srange(1, 5)) * 3, d = srange(6, 14);
     const wm = skyMats[i % 3];
     const m = new THREE.Mesh(boxGeo(w, h, d, 3), [wm, wm, MAT.roof, MAT.roof, wm, wm]);
-    m.position.set(Math.cos(a) * r, h / 2, Math.sin(a) * r); m.rotation.y = srange(0, 3); scene.add(m);
+    m.position.set(Math.cos(a) * r, h / 2, Math.sin(a) * r); m.rotation.y = srange(0, 3); WORLD.add(m);
   }
-  buildRidges();
-
-  buildAOMesh();
   buildCables();
-  buildGroundCover();
-
-  // Enemy spawn points around the perimeter
+}
+// Enemy spawn points around the edge of the playable square, wherever there is room.
+function buildSpawns() {
   const cand = [];
   for (let v = -54; v <= 54; v += 12) cand.push([v, -58], [v, 58], [-58, v], [58, v]);
   for (const [x, z] of cand) {
@@ -817,8 +909,6 @@ function buildWorld() {
     if (ok) SPAWNS.push(new V3(px, 0, pz));
   }
 }
-buildWorld();
-for (const c of crowns) c.traverse(noAO);
 camera.layers.enable(NO_AO);
 
 // One merged mesh of soft contact shadows: a nine-slice quad per object so the falloff width stays constant.
@@ -841,7 +931,7 @@ function buildAOMesh() {
     vertexShader: 'attribute vec3 color; varying vec2 vUv; varying float vK; void main(){ vUv = uv; vec4 mv = modelViewMatrix * vec4(position, 1.0); vK = color.r * exp(-length(mv.xyz) * 0.012); gl_Position = projectionMatrix * mv; }',
     fragmentShader: 'uniform sampler2D map; varying vec2 vUv; varying float vK; void main(){ gl_FragColor = vec4(0.0, 0.0, 0.0, texture2D(map, vUv).a * vK); }',
   });
-  const m = noAO(new THREE.Mesh(g, mat)); m.renderOrder = 1; scene.add(m);
+  const m = noAO(new THREE.Mesh(g, mat)); m.renderOrder = 1; WORLD.add(m);
 }
 function buildCables() {
   const mat = std({ color: 0x1d1b19, roughness: 0.8 });
@@ -851,30 +941,30 @@ function buildCables() {
       const A = new V3(...a).add(new V3(0, k * 0.25, 0)), Bp = new V3(...b).add(new V3(0, k * 0.25, 0));
       const mid = A.clone().lerp(Bp, 0.5); mid.y -= 1.3 + k * 0.2;
       const curve = new THREE.QuadraticBezierCurve3(A, mid, Bp);
-      const m = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 0.018, 4), mat); m.castShadow = true; scene.add(m);
+      const m = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 0.018, 4), mat); m.castShadow = true; WORLD.add(m);
     }
   }
 }
-function buildRidges() {
-  const g = new THREE.RingGeometry(150, 620, 360, 30).rotateX(-Math.PI / 2);
+function buildRidges({ inner = 150, low = 0xb49a78, high = 0x7d6a58, scale = 1, start = 170 } = {}) {
+  const g = new THREE.RingGeometry(inner, 620, 360, 30).rotateX(-Math.PI / 2);
   const pos = g.attributes.position, col = [];
-  const [a, b] = NZ, sand = new THREE.Color(0xb49a78), rock = new THREE.Color(0x7d6a58), c = new THREE.Color();
+  const [a, b] = NZ, sand = new THREE.Color(low), rock = new THREE.Color(high), c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i), r = Math.hypot(x, z);
     const u = x / 1400 + 0.5, v = z / 1400 + 0.5;
     const ridged = Math.pow(ridge(a(u, v, 6, 6, 5)), 2.2), broad = b(u, v, 3, 3, 4);
-    const h = (ridged * 70 + broad * 55) * sstep(170, 300, r) - 4;
+    const h = (ridged * 70 + broad * 55) * scale * sstep(start, start + 130, r) - 4;
     pos.setY(i, h);
     c.copy(sand).lerp(rock, sstep(12, 45, h) * (0.6 + ridged * 0.4));
     col.push(c.r, c.g, c.b);
   }
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.computeVertexNormals();
-  scene.add(new THREE.Mesh(g, std({ vertexColors: true, roughness: 1 })));
+  WORLD.add(new THREE.Mesh(g, std({ vertexColors: true, roughness: 1 })));
 }
-function onRoad(x, z) { return (Math.abs(z) < 5 && Math.abs(x) < 62) || (Math.abs(x) < 5 && z > -47); }
+function onRoad(x, z) { for (const r of radarRoads) if (x > r[0] && x < r[0] + r[2] && z > r[1] && z < r[1] + r[3]) return true; return false; }
 const grassUniforms = { uTime: { value: 0 } };
-function buildGroundCover() {
+function buildGroundCover({ grass: gDensity = 1, tint = 0xffffff, rocks: rockN = 420, rockTint = 0xc9b395 } = {}) {
   // Grass tufts: three crossed cards per tuft, lit as if their normals point up, swaying in the wind.
   const planes = [];
   for (let i = 0; i < 3; i++) { const p = new THREE.PlaneGeometry(0.75, 0.55).translate(0, 0.27, 0).rotateY((i / 3) * Math.PI); planes.push(p); }
@@ -887,13 +977,13 @@ function buildGroundCover() {
   }
   const tg = new THREE.BufferGeometry();
   tg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); tg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); tg.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3)); tg.setIndex(idx);
-  const gm = std({ map: TEX.grass, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 1, color: 0xffffff });
+  const gm = std({ map: TEX.grass, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 1, color: tint });
   gm.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = grassUniforms.uTime;
     sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>',
       '#include <begin_vertex>\n  vec4 ip = instanceMatrix[3];\n  float wv = sin(uTime * 1.6 + ip.x * 0.35 + ip.z * 0.27) * 0.6 + sin(uTime * 3.3 + ip.x * 1.3) * 0.25;\n  transformed.x += wv * position.y * 0.22; transformed.z += wv * position.y * 0.12;');
   };
-  const N = HIGH() ? 2600 : 1200;
+  const N = Math.round((HIGH() ? 2600 : 1200) * gDensity);
   const grass = new THREE.InstancedMesh(tg, gm, N);
   const dummy = new THREE.Object3D();
   let n = 0, guard = 0;
@@ -908,13 +998,13 @@ function buildGroundCover() {
       dummy.updateMatrix(); grass.setMatrixAt(n++, dummy.matrix);
     }
   }
-  grass.count = n; grass.receiveShadow = true; noAO(grass); scene.add(grass);
+  grass.count = n; grass.receiveShadow = true; noAO(grass); if (n) WORLD.add(grass);
   // Rocks and rubble
   const rg = new THREE.IcosahedronGeometry(0.22, 2);
   { const p = rg.attributes.position, [na] = NZ; for (let i = 0; i < p.count; i++) { const v = new V3().fromBufferAttribute(p, i); const k = 0.75 + na(v.x * 2 + 0.5, v.z * 2 + 0.5 + v.y, 4, 4, 3) * 0.5; p.setXYZ(i, v.x * k, v.y * k, v.z * k); } rg.computeVertexNormals(); }
-  const rocks = new THREE.InstancedMesh(rg, pbr(PBR.concrete, { color: 0xc9b395 }), 420);
+  const rocks = new THREE.InstancedMesh(rg, pbr(PBR.concrete, { color: rockTint }), Math.max(1, rockN));
   let r = 0;
-  for (let i = 0; i < 1200 && r < 420; i++) {
+  for (let i = 0; i < rockN * 3 && r < rockN; i++) {
     const x = srange(-HALF + 1, HALF - 1), z = srange(-HALF + 1, HALF - 1);
     if (!areaFree(x, z, 0.2)) continue;
     const big = srand() < 0.12;
@@ -922,8 +1012,455 @@ function buildGroundCover() {
     const sc = big ? srange(1.6, 2.6) : srange(0.3, 1.1); dummy.scale.set(sc, sc * srange(0.4, 0.8), sc);
     dummy.updateMatrix(); rocks.setMatrixAt(r++, dummy.matrix);
   }
-  rocks.count = r; rocks.castShadow = true; rocks.receiveShadow = true; scene.add(rocks);
+  rocks.count = r; rocks.castShadow = true; rocks.receiveShadow = true; WORLD.add(rocks);
 }
+
+// ---------------------------------------------------------------- map building helpers
+const SMOKE_COLUMNS = [];
+function mesh(geo, mat, x, y, z, { cast = true, parent = WORLD } = {}) {
+  const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = cast; m.receiveShadow = true; parent.add(m); return m;
+}
+function groundPlane(mat, { size = 600, cx = 0, cz = 0, w = size, d = size } = {}) {
+  const g = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
+  g.rotation.x = -Math.PI / 2; g.position.set(cx, 0, cz); g.receiveShadow = true; WORLD.add(g); return g;
+}
+function paved(cx, cz, w, d, mat, tile = 3, y = 0.012) {
+  const g = new THREE.PlaneGeometry(w, d), uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * w / tile, uv.getY(i) * d / tile);
+  const m = new THREE.Mesh(g, mat); m.rotation.x = -Math.PI / 2; m.position.set(cx, y, cz); m.receiveShadow = true; WORLD.add(m);
+  radarRoads.push([cx - w / 2, cz - d / 2, w, d]);
+  return m;
+}
+function fence(x0, z0, x1, z1, h = 3) {
+  const alongX = z0 === z1, len = Math.abs(alongX ? x1 - x0 : z1 - z0), cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  const g = new THREE.PlaneGeometry(len, h), uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len / 1.2, uv.getY(i) * h / 1.2);
+  const m = new THREE.Mesh(g, MAT.fence); m.position.set(cx, h / 2, cz); if (!alongX) m.rotation.y = Math.PI / 2; m.castShadow = true; WORLD.add(m);
+  for (let t = 0; t <= len; t += 3) mesh(new THREE.CylinderGeometry(0.05, 0.05, h + 0.3, 6), MAT.darkMetal, alongX ? Math.min(x0, x1) + t : cx, (h + 0.3) / 2, alongX ? cz : Math.min(z0, z1) + t);
+  addCollider(alongX ? Math.min(x0, x1) : cx - 0.1, 0, alongX ? cz - 0.1 : Math.min(z0, z1), alongX ? Math.max(x0, x1) : cx + 0.1, h, alongX ? cz + 0.1 : Math.max(z0, z1), 'metal');
+}
+function tWalls(x0, z0, x1, z1, h = 3.6) {
+  const alongX = z0 === z1, len = Math.abs(alongX ? x1 - x0 : z1 - z0), n = Math.max(1, Math.round(len / 1.5));
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n, x = lerp(x0, x1, t), z = lerp(z0, z1, t);
+    addBox(x, 0, z, alongX ? 1.46 : 1.1, 0.5, alongX ? 1.1 : 1.46, MAT.barrier, { collide: false });
+    addBox(x, 0.5, z, alongX ? 1.46 : 0.3, h - 0.5, alongX ? 0.3 : 1.46, MAT.barrier, { tile: 1.5, collide: false });
+  }
+  addCollider(Math.min(x0, x1) - (alongX ? 0 : 0.2), 0, Math.min(z0, z1) - (alongX ? 0.2 : 0), Math.max(x0, x1) + (alongX ? 0 : 0.2), h, Math.max(z0, z1) + (alongX ? 0.2 : 0));
+}
+function cylinderProp(x, z, r, h, mat, { y = 0, surf = 'metal', seg = 20 } = {}) {
+  mesh(new THREE.CylinderGeometry(r, r, h, seg), mat, x, y + h / 2, z);
+  addCollider(x - r * 0.9, y, z - r * 0.9, x + r * 0.9, y + h, z + r * 0.9, surf);
+  if (y < 0.25) addAO(x - r, z - r, x + r, z + r, 0.5);
+}
+function gableHouse(cx, cz, w, d, h, wallMat, { door = true } = {}) {
+  addBox(cx, 0, cz, w, h, d, [wallMat, wallMat, MAT.roof, MAT.roof, wallMat, wallMat], { tile: 3 });
+  const alongX = w >= d, span = alongX ? d : w, rh = span * 0.42;
+  const roof = new THREE.Mesh(new THREE.BufferGeometry(), MAT.tiles);
+  const L = (alongX ? w : d) + 0.6, S = span / 2 + 0.35;
+  const v = alongX
+    ? [[-L / 2, 0, -S], [L / 2, 0, -S], [L / 2, rh, 0], [-L / 2, rh, 0], [-L / 2, 0, S], [L / 2, 0, S]]
+    : [[-S, 0, -L / 2], [-S, 0, L / 2], [0, rh, L / 2], [0, rh, -L / 2], [S, 0, -L / 2], [S, 0, L / 2]];
+  const pos = [], uv = [];
+  const quad = (a, b, c, d2, uw, uh) => { for (const [p, t] of [[a, [0, 0]], [b, [uw, 0]], [c, [uw, uh]], [a, [0, 0]], [c, [uw, uh]], [d2, [0, uh]]]) { pos.push(...p); uv.push(...t); } };
+  const tl = L / 1.5, th = Math.hypot(S, rh) / 1.5;
+  if (alongX) { quad(v[0], v[1], v[2], v[3], tl, th); quad(v[5], v[4], v[3], v[2], tl, th); }
+  else { quad(v[1], v[0], v[3], v[2], tl, th); quad(v[4], v[5], v[2], v[3], tl, th); }
+  roof.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  roof.geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  roof.geometry.computeVertexNormals();
+  roof.material = MAT.tiles; roof.position.set(cx, h, cz); roof.castShadow = true; roof.receiveShadow = true; roof.material.side = THREE.DoubleSide;
+  WORLD.add(roof);
+  const gable = new THREE.BufferGeometry(), gp = [];
+  for (const sgn of [-1, 1]) {
+    if (alongX) gp.push(sgn * w / 2, 0, -d / 2, sgn * w / 2, 0, d / 2, sgn * w / 2, rh * 0.95, 0);
+    else gp.push(-w / 2, 0, sgn * d / 2, w / 2, 0, sgn * d / 2, 0, rh * 0.95, sgn * d / 2);
+  }
+  gable.setAttribute('position', new THREE.Float32BufferAttribute(gp, 3)); gable.computeVertexNormals();
+  const gm = mesh(gable, wallMat, cx, h, cz); gm.material = wallMat.clone(); gm.material.side = THREE.DoubleSide; gm.material.map = null; gm.material.normalMap = null; gm.material.roughnessMap = null;
+  if (door) { if (alongX) addBox(cx - w * 0.2, 0, cz + d / 2 + 0.06, 1.3, 2.2, 0.08, MAT.door, { collide: false, shadow: false, ao: false }); else addBox(cx + w / 2 + 0.06, 0, cz - d * 0.2, 0.08, 2.2, 1.3, MAT.door, { collide: false, shadow: false, ao: false }); }
+}
+function flatHouse(cx, cz, w, d, h, wallMat) {
+  addBox(cx, 0, cz, w, h, d, [wallMat, wallMat, MAT.roof, MAT.roof, wallMat, wallMat], { tile: 3 });
+  const t = 0.3;
+  addBox(cx, h, cz - d / 2 + t / 2, w, 0.7, t, wallMat, { tile: 3 }); addBox(cx, h, cz + d / 2 - t / 2, w, 0.7, t, wallMat, { tile: 3 });
+  addBox(cx - w / 2 + t / 2, h, cz, t, 0.7, d - 2 * t, wallMat, { tile: 3 }); addBox(cx + w / 2 - t / 2, h, cz, t, 0.7, d - 2 * t, wallMat, { tile: 3 });
+  addBox(cx + w * 0.15, 0, cz + d / 2 + 0.06, 1.3, 2.2, 0.08, MAT.door, { collide: false, shadow: false, ao: false });
+}
+function pine(x, z, h = 9, cypress = false) {
+  mesh(new THREE.CylinderGeometry(0.12, 0.22, h * 0.35, 6), MAT.bark, x, h * 0.175, z);
+  const tiers = cypress ? 1 : 4;
+  for (let i = 0; i < tiers; i++) {
+    const r = cypress ? h * 0.12 : h * (0.32 - i * 0.06), th = cypress ? h * 0.85 : h * 0.42;
+    mesh(new THREE.ConeGeometry(r, th, 7), MAT.pine, x, (cypress ? h * 0.55 : h * (0.38 + i * 0.17)), z).rotation.y = srand() * 3;
+  }
+  addCollider(x - 0.25, 0, z - 0.25, x + 0.25, h, z + 0.25, 'wood');
+  addAO(x - 0.6, z - 0.6, x + 0.6, z + 0.6, 0.45);
+}
+function leafyTree(x, z, h = 6) {
+  mesh(new THREE.CylinderGeometry(0.15, 0.25, h * 0.6, 7), MAT.bark, x, h * 0.3, z);
+  for (let i = 0; i < 4; i++) mesh(new THREE.IcosahedronGeometry(h * srange(0.2, 0.28), 1), MAT.leafy, x + srange(-1, 1), h * srange(0.6, 0.85), z + srange(-1, 1));
+  addCollider(x - 0.25, 0, z - 0.25, x + 0.25, h, z + 0.25, 'wood');
+  addAO(x - 1, z - 1, x + 1, z + 1, 0.4);
+}
+function floodlight(x, z, h = 14, light = false, color = 0xffb868) {
+  mesh(new THREE.CylinderGeometry(0.16, 0.24, h, 8), MAT.darkMetal, x, h / 2, z);
+  mesh(new THREE.BoxGeometry(2.2, 0.5, 0.6), MAT.darkMetal, x, h, z);
+  for (const dx of [-0.7, 0, 0.7]) mesh(new THREE.BoxGeometry(0.5, 0.35, 0.12), MAT.lamp, x + dx, h - 0.1, z + 0.32, { cast: false });
+  addCollider(x - 0.25, 0, z - 0.25, x + 0.25, h, z + 0.25, 'metal');
+  if (light) MAP_LIGHTS.push({ pos: new V3(x, h - 1, z + 1.5), color, intensity: 900, distance: 55, flicker: false });
+  const pool = mesh(new THREE.PlaneGeometry(26, 26), MAT.lightPool, x, 0.06, z + 4, { cast: false });
+  pool.rotation.x = -Math.PI / 2; pool.receiveShadow = false; noAO(pool);
+}
+function truck(x, z, alongX, tanker = false, mat = carMats[1]) {
+  const L = 8, W = 2.5, fx = alongX ? 1 : 0, fz = alongX ? 0 : 1;
+  addBox(x - fx * 2.9, 0.5, z - fz * 2.9, alongX ? 2.2 : W, 2.3, alongX ? W : 2.2, mat);
+  addBox(x - fx * 3.0, 1.7, z - fz * 3.0, alongX ? 1.4 : W - 0.1, 0.8, alongX ? W - 0.1 : 1.4, MAT.glass, { collide: false });
+  addBox(x + fx * 1.1, 0.5, z + fz * 1.1, alongX ? 5.6 : W, 0.4, alongX ? W : 5.6, MAT.darkMetal);
+  if (tanker) {
+    const t = mesh(new THREE.CylinderGeometry(1.15, 1.15, 5.4, 18), MAT.white, x + fx * 1.2, 2.1, z + fz * 1.2);
+    t.rotation.set(alongX ? 0 : Math.PI / 2, 0, alongX ? Math.PI / 2 : 0);
+    addCollider(x + fx * 1.2 - (alongX ? 2.7 : 1.15), 0.9, z + fz * 1.2 - (alongX ? 1.15 : 2.7), x + fx * 1.2 + (alongX ? 2.7 : 1.15), 3.3, z + fz * 1.2 + (alongX ? 1.15 : 2.7), 'metal');
+  } else addBox(x + fx * 1.1, 0.9, z + fz * 1.1, alongX ? 5.6 : W, 2.4, alongX ? W : 5.6, std({ color: 0x5c5f45, roughness: 0.95 }));
+  const wg = new THREE.CylinderGeometry(0.55, 0.55, 0.4, 14);
+  for (const along of [-3, 0.2, 2.6]) for (const side of [-1.1, 1.1]) {
+    const w = mesh(wg, MAT.tire, x + fx * along + fz * side, 0.55, z + fz * along + fx * side);
+    w.rotation.set(alongX ? Math.PI / 2 : 0, 0, alongX ? 0 : Math.PI / 2);
+  }
+}
+function hangar(cx, cz, w, d, h) {
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(w / 2, w / 2, d, 32, 1, true, Math.PI / 2, Math.PI).rotateX(Math.PI / 2), MAT.shed);
+  shell.scale.y = h / (w / 2); shell.position.set(cx, 0, cz); shell.castShadow = true; shell.receiveShadow = true; shell.material.side = THREE.DoubleSide; WORLD.add(shell);
+  for (const [sz, door] of [[-d / 2, true], [d / 2, false]]) {
+    const end = new THREE.Mesh(new THREE.CircleGeometry(w / 2, 32, 0, Math.PI), MAT.shed);
+    end.scale.y = h / (w / 2); end.position.set(cx, 0, cz + sz); if (sz > 0) end.rotation.y = Math.PI; end.castShadow = true; WORLD.add(end);
+    if (door) {
+      addBox(cx, 0, cz + sz - 0.08, w * 0.62, h * 0.72, 0.15, MAT.darkMetal, { collide: false, ao: false });
+      for (let i = 1; i < 6; i++) addBox(cx, i * h * 0.12, cz + sz - 0.17, w * 0.62, 0.05, 0.04, MAT.metal, { collide: false, ao: false, shadow: false });
+    }
+  }
+  addCollider(cx - w / 2 * 0.92, 0, cz - d / 2, cx + w / 2 * 0.92, h * 0.85, cz + d / 2, 'metal');
+  addAO(cx - w / 2, cz - d / 2, cx + w / 2, cz + d / 2, 0.6);
+}
+function ruin(cx, cz, w, d, h, mat, { marksman = false } = {}) {
+  const floors = Math.max(2, Math.round(h / 3)), base = Math.max(2, Math.floor(floors * srange(0.45, 0.7)));
+  addBox(cx, 0, cz, w, base * 3, d, [mat, mat, MAT.roof, MAT.roof, mat, mat], { tile: 3 });
+  for (let f = 1; f <= base; f++) addBox(cx, f * 3 - 0.15, cz, w + 0.35, 0.25, d + 0.35, MAT.concrete, { collide: false, ao: false });
+  let top = base * 3;
+  for (let f = base; f < floors; f++) {
+    for (const [qx, qz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      if (srand() < 0.3 + (f - base) * 0.18) continue;
+      const cw = (w / 2) * srange(0.55, 1), cd = (d / 2) * srange(0.55, 1), ch = srand() < 0.35 ? srange(1, 3) : 3;
+      addBox(cx + qx * (w / 2 - cw / 2), f * 3, cz + qz * (d / 2 - cd / 2), cw, ch, cd, [mat, mat, MAT.concrete, MAT.concrete, mat, mat], { tile: 3, ao: false });
+      top = Math.max(top, f * 3 + ch);
+    }
+  }
+  for (let k = 0; k < 4; k++) {
+    const side = Math.floor(srand() * 4), fy = srange(1.5, base * 3 - 2.5), along = srange(-0.35, 0.35);
+    const hw = srange(1.6, 3.2), hh = srange(1.2, 2.4), dark = std({ color: 0x0c0b0a, roughness: 1 });
+    if (side < 2) addBox(cx + along * w, fy, cz + (side ? 1 : -1) * (d / 2 + 0.02), hw, hh, 0.12, dark, { collide: false, ao: false, shadow: false });
+    else addBox(cx + (side === 2 ? 1 : -1) * (w / 2 + 0.02), fy, cz + along * d, 0.12, hh, hw, dark, { collide: false, ao: false, shadow: false });
+  }
+  const px = cx + (srand() < 0.5 ? -1 : 1) * (w / 2 + 1.6), pz = cz + srange(-d / 3, d / 3);
+  rubble(px, pz, 2.6);
+  if (marksman) MARKSMAN_SPOTS.push({ pos: new V3(cx, base * 3, cz), used: false });
+}
+const rubbleGeo = new THREE.DodecahedronGeometry(0.5, 0);
+function rubble(x, z, r = 2) {
+  for (let i = 0; i < 9; i++) {
+    const m = mesh(rubbleGeo, MAT.concrete, x + srange(-r, r) * 0.7, srange(0, 0.5), z + srange(-r, r) * 0.7);
+    m.scale.set(srange(0.6, 1.8), srange(0.4, 1.1), srange(0.6, 1.8)); m.rotation.set(srange(0, 3), srange(0, 3), srange(0, 3));
+  }
+  addCollider(x - r * 0.6, 0, z - r * 0.6, x + r * 0.6, 1.0, z + r * 0.6, 'stone');
+  addAO(x - r, z - r, x + r, z + r, 0.45);
+}
+function bus(x, z, alongX) {
+  const L = 11, W = 2.5;
+  addBox(x, 0.4, z, alongX ? L : W, 2.6, alongX ? W : L, MAT.burnt);
+  for (let i = 0; i < 7; i++) {
+    const t = -L / 2 + 1 + i * 1.45;
+    for (const s of [-1, 1]) addBox(x + (alongX ? t : s * (W / 2 + 0.01)), 1.6, z + (alongX ? s * (W / 2 + 0.01) : t), alongX ? 1.1 : 0.04, 0.9, alongX ? 0.04 : 1.1, std({ color: 0x050505, roughness: 1 }), { collide: false, ao: false, shadow: false });
+  }
+  FIRES.push(new V3(x, 2.2, z));
+}
+function tankWreck(x, z, rot = 0) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = rot; WORLD.add(g);
+  const hull = mesh(new THREE.BoxGeometry(3.4, 1.2, 7), MAT.burnt, 0, 1.0, 0, { parent: g });
+  for (const s of [-1, 1]) mesh(new THREE.BoxGeometry(0.7, 0.9, 7.2), MAT.tire, s * 1.75, 0.6, 0, { parent: g });
+  const tur = mesh(new THREE.CylinderGeometry(1.4, 1.6, 0.9, 10), MAT.burnt, 0.2, 2.05, 0.6, { parent: g }); tur.rotation.y = 0.6;
+  const gun = mesh(new THREE.CylinderGeometry(0.1, 0.12, 4.5, 8), MAT.burnt, -0.7, 2.0, -2.4, { parent: g }); gun.rotation.set(Math.PI / 2 - 0.15, 0, 0.3);
+  hull.rotation.z = 0.05;
+  addCollider(x - 2.6, 0, z - 2.6, x + 2.6, 2.4, z + 2.6, 'metal');
+  addAO(x - 3, z - 3, x + 3, z + 3, 0.6);
+}
+function crater(x, z, r) {
+  const m = new THREE.Mesh(new THREE.CircleGeometry(r, 24).rotateX(-Math.PI / 2), scorchMatWorld);
+  m.position.set(x, 0.03, z); noAO(m); WORLD.add(m);
+  for (let i = 0; i < 10; i++) { const a = (i / 10) * 6.28; const k = mesh(rubbleGeo, MAT.dirt, x + Math.cos(a) * r * 0.9, 0.1, z + Math.sin(a) * r * 0.9); k.scale.set(srange(0.5, 1.2), 0.35, srange(0.5, 1.2)); }
+}
+function crane(x, z) {
+  const legs = [[-5, -28], [5, -28], [-5, -17], [5, -17]];
+  for (const [dx, lz] of legs) { addBox(x + dx, 0, lz, 1, 22, 1, MAT.crane, { tile: 2 }); }
+  addBox(x, 20, -22.5, 12, 2, 13, MAT.crane, { tile: 2 });
+  addBox(x, 22, -34, 2.2, 1.6, 46, MAT.crane, { tile: 2, ao: false });
+  addBox(x, 22, -12, 2.2, 1.4, 8, MAT.crane, { tile: 2, ao: false });
+  addBox(x, 19, -16, 3, 2.4, 3, MAT.white, { ao: false });
+  addBox(x, 22, -8.5, 3, 2, 2, MAT.concrete, { ao: false });
+  const spreader = addBox(x, 12, -38, 2.6, 0.6, 6, MAT.crane, { collide: false, ao: false });
+  for (const dz of [-2, 2]) WORLD.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new V3(x, 22, -38 + dz), new V3(x, 12.6, -38 + dz)]), new THREE.LineBasicMaterial({ color: 0x222222 })));
+  const beacon = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.flash, color: new THREE.Color(3, 0.3, 0.2), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+  beacon.scale.setScalar(1.2); beacon.position.set(x, 24.2, -22.5); noAO(beacon); WORLD.add(beacon);
+  MARKSMAN_SPOTS.push({ pos: new V3(x + 3.5, 22, -22.5), used: false });
+  return spreader;
+}
+function ship(x0, x1, zc) {
+  const L = x1 - x0, cx = (x0 + x1) / 2;
+  addBox(cx, -3, zc, L, 3.2, 12, MAT.hullRed, { ao: false });
+  addBox(cx, 0.2, zc, L, 3.6, 12, MAT.hull, { ao: false });
+  addBox(cx + L / 2 - 1, 0.2, zc, 2, 4.4, 11, MAT.hull, { ao: false });
+  addBox(x1 - 9, 3.8, zc, 10, 9, 11, MAT.white, { tile: 3, ao: false });
+  addBox(x1 - 9, 12.8, zc, 12, 0.4, 12, MAT.white, { ao: false });
+  for (let i = 0; i < 4; i++) addBox(x1 - 13.98 + i * 0.01, 9, zc - 4 + i * 2.6, 0.06, 1.2, 1.8, MAT.glass, { collide: false, ao: false });
+  for (const fy of [5.2, 7.4]) addBox(x1 - 14.05, fy, zc, 0.06, 0.9, 10, MAT.cityLights, { collide: false, ao: false, shadow: false });
+  for (let bx = x0 + 6; bx < x1 - 18; bx += 6.3) for (let k = 0; k < 2; k++) {
+    const hgt = 1 + Math.floor(srand() * 3);
+    for (let y = 0; y < hgt; y++) container(bx, zc - 2.8 + k * 5.6 - 1.4, true, Math.floor(srand() * 5), 3.8 + y * 2.6);
+  }
+  MARKSMAN_SPOTS.push({ pos: new V3(x1 - 9, 13.2, zc), used: false });
+}
+function farSkyline(rMin, rMax, n, hMin, hMax, mat) {
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + srange(-0.04, 0.04), r = srange(rMin, rMax);
+    const w = srange(10, 22), h = srange(hMin, hMax), d = srange(10, 20);
+    const m = new THREE.Mesh(boxGeo(w, h, d, 12), mat);
+    m.position.set(Math.cos(a) * r, h / 2, Math.sin(a) * r); m.rotation.y = srange(0, 3); WORLD.add(m);
+  }
+}
+const scorchMatWorld = new THREE.MeshBasicMaterial({ map: TEX.scorch, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, opacity: 0.85 });
+
+// ---------------------------------------------------------------- maps
+function buildAirbase() {
+  groundPlane(MAT.sand);
+  road(0, -22, 124, 16, true);
+  for (let x = -54; x <= 54; x += 9) paved(x, -22, 4.5, 0.45, MAT.white, 1, 0.03);
+  for (const sx of [-58, 58]) for (let i = -3; i <= 3; i++) paved(sx, -22 + i * 2, 3.5, 0.9, MAT.white, 1, 0.03);
+  for (let x = -60; x <= 60; x += 8) for (const ez of [-30.4, -13.6]) addBox(x, 0, ez, 0.3, 0.25, 0.3, MAT.lamp, { collide: false, ao: false, shadow: false });
+  road(30, 4, 36, 9, false);
+  paved(0, 28, 112, 12, MAT.concrete, 6);
+  hangar(-38, 46, 18, 18, 9); hangar(-10, 46, 18, 18, 9); hangar(18, 46, 18, 18, 9);
+  // Control tower with a glass cab; a marksman watches from the roof.
+  addBox(45, 0, 10, 5, 12, 5, MAT.concrete, { tile: 3 });
+  addBox(45, 12, 10, 6.4, 3, 6.4, MAT.glass);
+  addBox(45, 15, 10, 7, 0.35, 7, MAT.concrete);
+  for (const [dx, dz, w, d] of [[0, -3.4, 7, 0.2], [0, 3.4, 7, 0.2], [-3.4, 0, 0.2, 7], [3.4, 0, 0.2, 7]]) addBox(45 + dx, 15.35, 10 + dz, w, 0.9, d, MAT.darkMetal, { ao: false });
+  MARKSMAN_SPOTS.push({ pos: new V3(45, 15.35, 10), used: false });
+  // Fuel farm behind a low berm
+  for (const [x, z] of [[-45, -47], [-34, -47], [-45, -57]]) cylinderProp(x, z, 3.6, 5.5, MAT.white);
+  MARKSMAN_SPOTS.push({ pos: new V3(-34, 5.5, -47), used: false });
+  wallSeg(-52, -40, -40, -40, 1.2); wallSeg(-36, -40, -28, -40, 1.2); wallSeg(-28, -40, -28, -61, 1.2);
+  // Radar dome on its plinth
+  addBox(46, 0, -46, 6, 5, 6, MAT.concrete, { tile: 3 });
+  mesh(new THREE.SphereGeometry(4, 28, 18), MAT.white, 46, 8.2, -46);
+  addCollider(43, 5, -49, 49, 11.5, -43, 'metal');
+  // Revetments for the launchers and parked jets
+  tWalls(-47, 2, -37, 2); tWalls(-47, 10, -37, 10); tWalls(-48, 2, -48, 10);
+  tWalls(5, -51, 15, -51); tWalls(4, -51, 4, -41); tWalls(16, -51, 16, -41);
+  tWalls(46, 25, 56, 25); tWalls(46, 33, 56, 33);
+  for (const [x, z, yaw] of [[-24, 28, Math.PI], [2, 28, Math.PI]]) {
+    const j = buildJet(); scene.remove(j); WORLD.add(j);
+    j.position.set(x, 2, z); j.rotation.y = yaw; j.scale.setScalar(0.8);
+    j.traverse((o) => { if (o.isSprite) o.visible = false; if (o.isMesh) o.castShadow = true; });
+    addCollider(x - 4.8, 0, z - 5.5, x + 4.8, 3, z + 5.5, 'metal');
+    addAO(x - 3, z - 5, x + 3, z + 5, 0.5);
+  }
+  truck(-12, 18, true, true); truck(36, -6, false, true, carMats[0]); truck(-52, -30, false, false);
+  for (const [x, z] of [[-30, -6], [-18, -36], [24, -38], [52, 2], [-56, 18], [30, 18]]) { barrel(x, z, 1); barrel(x + 0.75, z, 1); barrel(x, z + 0.75, 2); }
+  for (const [x, z, l, ax] of [[-8, -4, 3, true], [10, 6, 3, false], [-26, 14, 3, true], [20, -4, 3, true]]) sandbags(x, z, l, ax);
+  for (const [x, z] of [[-4, 12], [12, -6], [-34, 16], [40, -34]]) { crate(x, z); crate(x + 1.12, z); crate(x + 0.5, z, 1.1, 0.95); }
+  for (const [x, z] of [[-56, 34], [56, 36], [-20, 10], [6, -4]]) floodlight(x, z, 12, false);
+  fence(-62, -62, 62, -62); fence(-62, 62, 62, 62); fence(-62, -62, -62, 62); fence(62, -62, 62, 62);
+}
+function buildPort() {
+  paved(0, 135, 600, 330, MAT.concrete, 6, 0.004);
+  radarRoads.pop();
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(1400, 700), MAT.water);
+  water.rotation.x = -Math.PI / 2; water.position.set(0, -1.1, -380); water.receiveShadow = true; WORLD.add(water);
+  addBox(0, -3, -30.5, 140, 3.1, 1, MAT.concrete, { tile: 3, ao: false });
+  addCollider(-400, -6, -400, 400, 0.6, -30.05, 'water');
+  for (let x = -60; x <= 60; x += 7) {
+    cylinderProp(x, -29.4, 0.25, 0.7, MAT.darkMetal);
+    const f = mesh(new THREE.TorusGeometry(0.45, 0.18, 8, 14), MAT.tire, x + 3.5, -0.8, -30.95); f.rotation.y = 0;
+  }
+  for (const z of [-27.5, -17.5]) paved(0, z, 124, 0.25, MAT.darkMetal, 1, 0.02);
+  crane(-32, 0); crane(16, 0);
+  ship(-24, 46, -40);
+  road(0, 17, 124, 10, true);
+  road(56, 40, 44, 8, false);
+  // Container yard: stacked rows with aisles between them
+  const keep = [[14, -10, 7], [-55, 55, 8], [54, 30, 8], [-20, -8, 4], [36, -6, 4]];
+  for (const z of [-22, -12.5, -3, 6.5]) {
+    for (let x = -56; x <= 52; x += 6.4) {
+      if (Math.abs(x + 22) < 3 || Math.abs(x - 8) < 3 || Math.abs(x - 34) < 3) continue;
+      if (keep.some(([kx, kz, r]) => Math.hypot(x - kx, z - kz) < r)) continue;
+      if (srand() < 0.18) continue;
+      for (const dz of [-1.3, 1.3]) {
+        const hgt = 1 + Math.floor(srand() * (z < -15 ? 2 : 3));
+        for (let y = 0; y < hgt; y++) container(x, z + dz, true, Math.floor(srand() * 5), y * 2.6);
+      }
+    }
+  }
+  // Warehouses and the harbour office
+  for (const [cx, cz, w, d, h] of [[-38, 40, 30, 18, 11], [2, 40, 26, 18, 11], [40, 46, 20, 12, 9]]) {
+    addBox(cx, 0, cz, w, h, d, [MAT.shed, MAT.shed, MAT.roof, MAT.roof, MAT.shed, MAT.shed], { tile: 2.6 });
+    gableRoofOnly(cx, cz, w, d, h);
+    for (let i = 0; i < 2; i++) addBox(cx - w * 0.25 + i * w * 0.5, 0, cz - d / 2 - 0.08, w * 0.3, h * 0.6, 0.1, MAT.darkMetal, { collide: false, ao: false });
+  }
+  building(40, 27, 12, 7, 6, MAT.wallGrey);
+  floodlight(-44, -25, 16, true); floodlight(-4, -25, 16, true); floodlight(30, 4, 16, true);
+  floodlight(-20, 26, 14); floodlight(20, 26, 14); floodlight(-50, 10, 14); floodlight(50, -26, 14); floodlight(-26, 2, 14); floodlight(6, 2, 14);
+  for (const [x, z] of [[-12, 12], [24, 12], [-50, 14], [48, 12]]) { barrel(x, z, 0); barrel(x + 0.75, z, 2); }
+  for (const [x, z] of [[-30, -8], [2, -20], [44, -16], [-50, -4]]) { crate(x, z); crate(x, z + 1.12); }
+  truck(-28, 22, true, false, carMats[2]); truck(26, 22, true, false, carMats[1]);
+  car(-6, 21, true, false, 0);
+  fence(-62, -30, -62, 62); fence(62, -30, 62, 62); fence(-62, 62, 62, 62);
+  farSkyline(320, 460, 40, 20, 70, MAT.cityLights);
+}
+function gableRoofOnly(cx, cz, w, d, h) {
+  const alongX = w >= d, span = alongX ? d : w, rh = span * 0.22, L = (alongX ? w : d) + 0.4, S = span / 2 + 0.3;
+  const pts = alongX ? [[-L / 2, 0, -S], [L / 2, 0, -S], [L / 2, rh, 0], [-L / 2, rh, 0], [-L / 2, 0, S], [L / 2, 0, S]]
+    : [[-S, 0, -L / 2], [-S, 0, L / 2], [0, rh, L / 2], [0, rh, -L / 2], [S, 0, -L / 2], [S, 0, L / 2]];
+  const idx = alongX ? [0, 1, 2, 0, 2, 3, 5, 4, 3, 5, 3, 2] : [1, 0, 3, 1, 3, 2, 4, 5, 2, 4, 2, 3];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts.flat(), 3)); g.setIndex(idx); g.computeVertexNormals();
+  const m = mesh(g, MAT.darkMetal, cx, h, cz); m.material = MAT.roofMetal;
+}
+function buildVillage() {
+  groundPlane(MAT.dirt);
+  road(0, 0, 124, 6, true, PBR.cobble, 2);
+  road(-26, -33.5, 57, 5, false, PBR.cobble, 2); road(-26, 33.5, 57, 5, false, PBR.cobble, 2);
+  road(26, -33.5, 57, 5, false, PBR.cobble, 2); road(26, 33.5, 57, 5, false, PBR.cobble, 2);
+  road(0, -30, 47, 4, true, PBR.cobble, 2);
+  paved(0, 0, 16, 16, MAT.concrete, 2, 0.03);
+  cylinderProp(0, 0, 1.8, 0.9, MAT.stone, { surf: 'stone' });
+  mesh(new THREE.CylinderGeometry(0.25, 0.3, 2.2, 10), MAT.stone, 0, 1.1, 0);
+  // Church with a bell tower that a marksman uses
+  gableHouse(9, 14, 8, 12, 7, MAT.stone, { door: false });
+  addBox(9, 0, 6.5, 4, 17, 4, MAT.stone, { tile: 3 });
+  addBox(9, 17, 6.5, 4.6, 0.4, 4.6, MAT.stone);
+  for (const [dx, dz] of [[-2.1, -2.1], [2.1, -2.1], [-2.1, 2.1], [2.1, 2.1]]) addBox(9 + dx, 17.4, 6.5 + dz, 0.4, 2.2, 0.4, MAT.stone, { ao: false });
+  addBox(9, 19.6, 6.5, 4.8, 0.5, 4.8, MAT.tiles, { ao: false });
+  MARKSMAN_SPOTS.push({ pos: new V3(9, 17.4, 6.5), used: false });
+  // The Jackal's walled compound in the east block, with gates toward his convoy
+  flatHouse(36, 28, 12, 9, 6.5, MAT.wallOchre);
+  MARKSMAN_SPOTS.push({ pos: new V3(36, 6.5, 28), used: false });
+  for (const [x0, z0, x1, z1] of [[24, 14, 46, 14], [24, 14, 24, 36], [24, 36, 39, 36], [46, 14, 46, 27]]) wallStone(x0, z0, x1, z1, 2.6);
+  car(30, 18, true, false, 2); car(41, 18, true, false, 0);
+  truck(55, 55, false, false, carMats[0]); car(52, 49, false, false, 1);
+  // Houses filling the blocks between the lanes
+  const avoid = [[0, 0, 11], [9, 10, 9], [35, 25, 15], [-56, -8, 6], [-50, -50, 9], [56, 56, 8]];
+  for (let gx = -54; gx <= 54; gx += 12) for (let gz = -54; gz <= 54; gz += 12) {
+    const x = gx + srange(-1.5, 1.5), z = gz + srange(-1.5, 1.5);
+    if (avoid.some(([ax, az, r]) => Math.hypot(x - ax, z - az) < r)) continue;
+    const w = srange(6, 9), d = srange(6, 9);
+    let blocked = false;
+    for (const r of radarRoads) if (x + w / 2 + 1 > r[0] && x - w / 2 - 1 < r[0] + r[2] && z + d / 2 + 1 > r[1] && z - d / 2 - 1 < r[1] + r[3]) blocked = true;
+    if (blocked) continue;
+    if (srand() < 0.15) { leafyTree(x, z, srange(5, 7)); continue; }
+    const h = srand() < 0.4 ? srange(5.5, 7) : srange(3.2, 4.2);
+    const wm = [MAT.stone, MAT.wallTan, MAT.stone, MAT.wallOchre][Math.floor(srand() * 4)];
+    if (srand() < 0.55) gableHouse(x, z, w, d, h, wm); else flatHouse(x, z, w, d, h, wm);
+    if (srand() < 0.35) wallStone(x - w / 2 - 2, z + d / 2 + 2, x + w / 2 + 2, z + d / 2 + 2, 1.1);
+  }
+  for (let i = 0; i < 70; i++) {
+    const x = srange(-60, 60), z = srange(-60, 60);
+    if (onRoad(x, z) || !areaFree(x, z, 1.4) || avoid.slice(0, 2).some(([ax, az, r]) => Math.hypot(x - ax, z - az) < r)) continue;
+    pine(x, z, srange(7, 12), srand() < 0.3);
+  }
+  for (const [x, z, c] of [[-8, -6, 0], [-8, 6, 1], [6, -8, 2]]) stall(x, z, c);
+  for (const [x, z] of [[-14, 9], [16, -9], [-40, 9], [40, -8]]) { mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.2, 14), MAT.hay, x, 0.6, z).rotation.z = Math.PI / 2; addCollider(x - 0.6, 0, z - 0.7, x + 0.6, 1.4, z + 0.7, 'wood'); }
+  for (const [x, z] of [[-30, -6], [30, 6], [-20, 24], [20, -24]]) { barrel(x, z, 2); crate(x + 1, z); }
+  wallStone(-62, -62, 62, -62, 3); wallStone(-62, 62, 62, 62, 3); wallStone(-62, -62, -62, 62, 3); wallStone(62, -62, 62, 50, 3);
+  for (let i = 0; i < 90; i++) { const a = srange(0, 6.28), r = srange(70, 150); pine(Math.cos(a) * r, Math.sin(a) * r, srange(10, 18)); colliders.pop(); }
+}
+function wallStone(x0, z0, x1, z1, h) {
+  const t = 0.55;
+  if (x0 === x1) addBox(x0, 0, (z0 + z1) / 2, t, h, Math.abs(z1 - z0), MAT.stone, { tile: 3 });
+  else addBox((x0 + x1) / 2, 0, z0, Math.abs(x1 - x0), h, t, MAT.stone, { tile: 3 });
+}
+function stall(x, z, c) {
+  for (const [dx, dz] of [[-1.4, -1], [1.4, -1], [-1.4, 1], [1.4, 1]]) mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.4, 6), MAT.bark, x + dx, 1.2, z + dz);
+  const cloth = mesh(new THREE.PlaneGeometry(3.2, 2.6), MAT.cloth[c % MAT.cloth.length], x, 2.45, z); cloth.rotation.x = -Math.PI / 2 + 0.12;
+  addBox(x, 0, z, 2.6, 0.9, 1.2, MAT.crate);
+}
+function buildCity() {
+  groundPlane(MAT.asphalt);
+  road(0, 0, 124, 12, true); road(0, -36, 48, 12, false); road(0, 36, 48, 12, false);
+  for (const s of [-1, 1]) { paved(0, s * 7.5, 124, 3, MAT.concrete, 2, 0.05); paved(s * 7.5, -36, 3, 48, MAT.concrete, 2, 0.05); paved(s * 7.5, 36, 3, 48, MAT.concrete, 2, 0.05); }
+  // Elevated highway along the north, with a collapsed span
+  for (let x = -60; x <= 60; x += 12) {
+    if (x > 2 && x < 22) continue;
+    for (const z of [-38, -30]) addBox(x, 0, z, 1.6, 7, 1.6, MAT.concrete, { tile: 3 });
+  }
+  for (const [x0, x1] of [[-62, 4], [20, 62]]) {
+    const cx = (x0 + x1) / 2, L = x1 - x0;
+    addBox(cx, 7, -34, L, 1.1, 12, MAT.concrete, { tile: 3, ao: false });
+    for (const z of [-39.8, -28.2]) addBox(cx, 8.1, z, L, 0.9, 0.4, MAT.barrier, { tile: 1.5, ao: false });
+  }
+  const slab = mesh(new THREE.BoxGeometry(17, 1.1, 12), MAT.concrete, 12, 3.6, -34); slab.rotation.z = -0.42;
+  addCollider(4, 0, -40, 12, 6.5, -28, 'stone'); addCollider(12, 0, -40, 20, 3, -28, 'stone');
+  rubble(19, -27, 3); rubble(6, -41, 2.5);
+  // Ruined blocks in each quadrant
+  ruin(-30, -18, 18, 12, 21, MAT.ruinGrey, { marksman: true }); ruin(-50, -52, 14, 10, 15, MAT.ruinPale); ruin(-22, -52, 16, 10, 12, MAT.ruinGrey);
+  ruin(40, -18, 16, 12, 15, MAT.ruinPale); ruin(40, -52, 20, 10, 18, MAT.ruinGrey, { marksman: true });
+  ruin(-28, 24, 20, 14, 24, MAT.ruinDark, { marksman: true }); ruin(-50, 48, 16, 14, 18, MAT.ruinGrey); ruin(-20, 50, 14, 12, 12, MAT.ruinPale);
+  ruin(28, 24, 14, 12, 18, MAT.ruinGrey); ruin(48, 42, 16, 14, 21, MAT.ruinDark, { marksman: true }); ruin(22, 50, 14, 10, 15, MAT.ruinPale);
+  bus(-2.6, -18, false); bus(-22, 2.6, true); bus(30, -3, true);
+  tankWreck(-12, -3.5, 1.2);
+  for (const [x, z, ax, burn] of [[16, 3, true, false], [-40, -2.5, true, true], [3, 26, false, false], [-3, 44, false, true], [46, 3, true, false]]) car(x, z, ax, burn, 1);
+  for (const [x, z, r] of [[0, -10, 2.4], [-36, 6, 3], [22, -8, 2.2], [-6, 30, 2.6]]) crater(x, z, r);
+  for (const [x, z, l, ax] of [[8, 6.5, 4, true], [16, 8, 3, false], [4, 16, 3, true], [-8, 8, 3, false], [10, -8, 3, true]]) sandbags(x, z, l, ax);
+  for (const [x, z, l, ax] of [[-6, 16, 3, false], [18, 16, 3, true], [-16, -8, 3, true]]) barrier(x, z, l, ax);
+  for (const [x, z] of [[-44, 14], [44, 14], [-12, 30], [14, -26]]) rubble(x, z, 2.4);
+  for (const [x, z] of [[-9, -12], [9, 12], [-9, 24], [9, -24], [-24, -9], [24, 9]]) lamp(x, z);
+  wallSeg(-62, -62, 62, -62, 4); wallSeg(-62, 62, 62, 62, 4); wallSeg(-62, -62, -62, 62, 4); wallSeg(62, -62, 62, 62, 4);
+  farSkyline(170, 320, 30, 18, 60, MAT.skyline);
+  SMOKE_COLUMNS.push(new V3(-140, 20, -160), new V3(170, 25, -60), new V3(60, 20, 190));
+}
+const MAPS = {
+  kessar: { name: 'Kessar Compound', seed: 417, build: buildKessar, start: [5, 12], groundSurf: 'sand', ridges: {}, cover: {} },
+  airbase: { name: 'Wadi Kesh Airfield', seed: 911, build: buildAirbase, start: [20, -57], groundSurf: 'sand', ridges: { inner: 160 }, cover: { grass: 0.45, rocks: 300 } },
+  port: { name: 'Port Tamar', seed: 1207, build: buildPort, start: [-55, 55], groundSurf: 'stone', ridges: { inner: 260, low: 0x5a5448, high: 0x3c3a36, scale: 1.3, start: 280 }, cover: { grass: 0.12, tint: 0xa8a080, rocks: 60, rockTint: 0x8a8a86 } },
+  village: { name: 'Shirin Dara', seed: 3301, build: buildVillage, start: [-56, -8], groundSurf: 'sand', ridges: { inner: 120, low: 0x4f5f3a, high: 0x5e5a52, scale: 1.9, start: 130 }, cover: { grass: 1.6, tint: 0x9cc06e, rocks: 240, rockTint: 0x9a968c } },
+  city: { name: 'Haddar', seed: 5150, build: buildCity, start: [10, 20], groundSurf: 'stone', ridges: { inner: 240, low: 0x8a7a66, high: 0x6a5e52, start: 260 }, cover: { grass: 0.25, tint: 0xc8bc8c, rocks: 520, rockTint: 0x9a948a } },
+};
+let mapName = null, curMap = MAPS.kessar;
+function clearWorld() {
+  scene.remove(WORLD);
+  WORLD.traverse((o) => { if (o.geometry && o.geometry !== frondGeo && o.geometry !== rubbleGeo) o.geometry.dispose(); });
+  WORLD = new THREE.Group(); scene.add(WORLD);
+  colliders.length = 0; aoRects.length = 0; radarRoads.length = 0; MARKSMAN_SPOTS.length = 0; SPAWNS.length = 0; FIRES.length = 0; crowns.length = 0; MAP_LIGHTS.length = 0; SMOKE_COLUMNS.length = 0;
+  for (const m of roadMats) { m.map.dispose(); m.normalMap.dispose(); m.roughnessMap.dispose(); m.dispose(); }
+  roadMats.length = 0;
+}
+function loadMap(name) {
+  if (name === mapName) return false;
+  clearWorld();
+  mapName = name; curMap = MAPS[name];
+  srand = mulberry32(curMap.seed);
+  PLAYER_START.set(curMap.start[0], 0, curMap.start[1]);
+  curMap.build();
+  if (curMap.ridges) buildRidges(curMap.ridges);
+  buildAOMesh();
+  buildGroundCover(curMap.cover);
+  buildSpawns();
+  for (const c of crowns) c.traverse(noAO);
+  placeMapLights();
+  return true;
+}
+SURF.set(MAT.crate, 'wood'); SURF.set(MAT.sandbag, 'sand'); SURF.set(MAT.dirt, 'sand');
+for (const m of [MAT.metal, MAT.darkMetal, MAT.burnt, MAT.glass, MAT.shed, MAT.white, MAT.crane, MAT.hull, MAT.hullRed, ...containerMats, ...barrelMats, ...carMats]) SURF.set(m, 'metal');
+MAT.roofMetal = std({ color: 0x6a6e70, roughness: 0.6, metalness: 0.5, side: THREE.DoubleSide, roughnessMap: PBR.wear.roughnessMap });
+loadMap('kessar');
 
 // ---------------------------------------------------------------- physics queries
 const hitNormal = new V3();
@@ -931,7 +1468,7 @@ let hitSurf = 'sand';
 function rayWorld(o, d, maxT) {
   let best = maxT, nx = 0, ny = 0, nz = 0;
   let surf = 'sand';
-  if (d.y < -1e-6) { const t = -o.y / d.y; if (t > 0 && t < best) { best = t; nx = 0; ny = 1; nz = 0; surf = onRoad(o.x + d.x * t, o.z + d.z * t) ? 'stone' : 'sand'; } }
+  if (d.y < -1e-6) { const t = -o.y / d.y; if (t > 0 && t < best) { best = t; nx = 0; ny = 1; nz = 0; surf = onRoad(o.x + d.x * t, o.z + d.z * t) ? 'stone' : curMap.groundSurf; } }
   const ix = 1 / d.x, iy = 1 / d.y, iz = 1 / d.z;
   for (let i = 0; i < colliders.length; i++) {
     const b = colliders[i];
@@ -1303,7 +1840,16 @@ function bloodFX(p, d) {
 const muzzleLight = new THREE.PointLight(0xffb060, 0, 12, 2);
 scene.add(muzzleLight);
 const blastLights = [0, 1].map(() => { const l = new THREE.PointLight(0xff9a40, 0, 45, 2); scene.add(l); return l; });
-const fireLights = FIRES.slice(0, 3).map((p) => { const l = new THREE.PointLight(0xff8a30, 30, 18, 2); l.position.copy(p).add(new V3(0, 1, 0)); scene.add(l); return l; });
+fireLights = [0, 1, 2].map(() => { const l = new THREE.PointLight(0xff8a30, 0, 18, 2); scene.add(l); return l; });
+// Three point lights serve each map: its own floodlights if it has any, otherwise its burning wrecks.
+function placeMapLights() {
+  const src = MAP_LIGHTS.length ? MAP_LIGHTS : FIRES.slice(0, 3).map((p) => ({ pos: p.clone().add(new V3(0, 1, 0)), color: 0xff8a30, intensity: 30, distance: 18, flicker: true }));
+  fireLights.forEach((l, i) => {
+    const c = src[i] || null; l.userData.cfg = c;
+    if (c) { l.position.copy(c.pos); l.color.setHex(c.color); l.distance = c.distance; l.intensity = c.intensity; } else l.intensity = 0;
+  });
+}
+placeMapLights();
 
 const shockGeo = new THREE.RingGeometry(0.8, 1, 40).rotateX(-Math.PI / 2);
 const shocks = [];
@@ -2430,8 +2976,9 @@ function updateFX(dt, rdt) {
     const n = Math.random() < 0.5 ? 2 : 1;
     for (let k = 0; k < n; k++) fxAdd.spawn(p.x + rand(-0.6, 0.6), p.y + rand(-0.2, 0.3), p.z + rand(-0.9, 0.9), rand(-0.3, 0.3), rand(1.5, 3.2), rand(-0.3, 0.3), 1, rand(0.35, 0.6), 0.1, rand(0.5, 0.9), rand(0.35, 0.7), { drag: 1, grow: -0.6 });
     if (Math.random() < dt * 9) fxSmoke.spawn(p.x + rand(-0.4, 0.4), p.y + 1.2, p.z + rand(-0.4, 0.4), rand(-0.3, 0.3) + 0.4, rand(1.8, 2.8), rand(-0.3, 0.3), 0.12, 0.11, 0.1, rand(1.2, 1.8), rand(4, 6), { drag: 0.3, grow: 1.1, alpha: 0.7 });
-    if (fireLights[i]) fireLights[i].intensity = 26 + Math.sin(G.time * 17 + i) * 6 + Math.random() * 8;
   });
+  fireLights.forEach((l, i) => { const c = l.userData.cfg; if (c) l.intensity = c.flicker ? c.intensity * (0.8 + Math.sin(G.time * 17 + i) * 0.15 + Math.random() * 0.25) : c.intensity; });
+  for (const p of SMOKE_COLUMNS) if (Math.random() < dt * 6) fxSmoke.spawn(p.x + rand(-3, 3), p.y, p.z + rand(-3, 3), rand(-0.5, 0.5) + 1.5, rand(5, 8), rand(-0.5, 0.5), 0.09, 0.085, 0.08, rand(10, 16), rand(12, 18), { drag: 0.05, grow: 2.5, alpha: 0.6 });
   const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
   for (let i = 0; i < DUST_N; i++) {
     const j = i * 3;
@@ -2752,7 +3299,7 @@ const ENVS = {
     sky: { turb: 16, ray: 1.2, mie: 0.02, scale: 0.42, cloud: 0.25, dust: 1, sunCol: [0xfff0d4, 1.5] }, exposure: 0.95, weather: 'sand', perception: 0.55,
   },
   night: {
-    sun: [0.42, 0.52, 0.55], sunCol: 0x9fb6e6, sunI: 0.32, hemi: [0x34445f, 0x100e0c, 0.09], fog: 0x0c1119, fogD: 0.014, sunFog: [0x3c4a64, 1],
+    sun: [0.42, 0.52, 0.55], sunCol: 0x9fb6e6, sunI: 0.45, hemi: [0x34445f, 0x100e0c, 0.12], fog: 0x0c1119, fogD: 0.014, sunFog: [0x3c4a64, 1],
     sky: { turb: 2, ray: 1, mie: 0.004, scale: 0.5, cloud: 0.3, night: 1, sunCol: [0xd8e4ff, 1.4] }, exposure: 1.25, night: true, perception: 0.35,
   },
   rain: {
@@ -2767,8 +3314,9 @@ const ENVS = {
 let ENV = ENVS.dawn, envName = 'dawn';
 const baseLook = new Map();
 const wetMats = () => [MAT.sand, MAT.concrete, MAT.perimeter, MAT.barrier, MAT.roof, MAT.crate, MAT.sandbag, MAT.wallTan, MAT.wallOchre, MAT.wallGrey, ...roadMats];
-function applyEnv(name) {
-  if (name === envName) return false;
+function applyEnv(name, force = false) {
+  if (name === envName && !force) return false;
+  const changed = name !== envName;
   const E = ENV = ENVS[name]; envName = name;
   SUN_DIR.set(...E.sun).normalize();
   sun.color.setHex(E.sunCol); sun.intensity = E.sunI;
@@ -2789,9 +3337,13 @@ function applyEnv(name) {
   vmHemi.intensity = clamp(E.hemi[2] * 3, 0.2, 1.3);
   rain.visible = E.weather === 'rain'; sandstorm.visible = E.weather === 'sand';
   for (const e of enemies) if (e.m.beam) e.m.beam.visible = !!E.night;
-  installFog(); FOG_VERSION++;
-  const touchMat = (o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.needsUpdate = true; }); };
-  scene.traverse(touchMat); vmScene.traverse(touchMat);
+  MAT.cityLights.emissiveIntensity = E.night ? 1.8 : name === 'sunset' ? 0.35 : 0.04;
+  MAT.lightPool.opacity = E.night ? 0.24 : 0;
+  if (changed) {
+    installFog(); FOG_VERSION++;
+    const touchMat = (o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.needsUpdate = true; }); };
+    scene.traverse(touchMat); vmScene.traverse(touchMat);
+  }
   Sfx.setWeather(E.weather || null);
   captureEnvironment();
   return true;
@@ -2871,6 +3423,7 @@ function updateWeather(rdt) {
   skyUniforms.uFlash.value = fl;
   hemi.intensity = ENV.hemi[2] + fl * 2.4;
   skyUniforms.uTime.value = performance.now() / 1000;
+  MAT.water.normalMap.offset.set(performance.now() / 1000 * 0.004, performance.now() / 1000 * 0.0025);
   if (sandstorm.visible) {
     weather.gust = 9 + Math.sin(performance.now() / 1000 * 0.7) * 4 + Math.sin(performance.now() / 1000 * 2.3) * 2;
     for (let i = 0; i < SAND_N; i++) {
@@ -3042,39 +3595,39 @@ function updateHeli(dt) {
 // ---------------------------------------------------------------- missions
 const MISSIONS = [
   {
-    id: 'survival', name: 'Ironveil', tag: 'Survival', env: 'dawn', time: '0552 · Dawn', color: '#f0a53a', mode: 'waves',
+    id: 'survival', name: 'Ironveil', tag: 'Survival', env: 'dawn', map: 'kessar', time: '0552 · Dawn', color: '#f0a53a', mode: 'waves',
     brief: 'Hold the Kessar crossroads against endless assault waves. Marksmen take the rooftops from wave two. Survive as long as you can.',
   },
   {
-    id: 'dustdevil', name: 'Dust Devil', tag: 'Sabotage', env: 'storm', time: '1310 · Sandstorm', color: '#c9a46a', level: 2,
-    brief: 'A sandstorm has grounded their air cover. Plant charges on three SAM launchers before it clears, then reach the extraction helicopter.',
-    start: [0, 40], startYaw: 0,
-    spawn: { max: 6, every: 4.5, heavy: 0.2 },
-    guards: [[-44, -30, 'rifleman'], [-40, -27, 'rifleman'], [46, -30, 'heavy'], [42, -33, 'rifleman'], [-38, 46, 'rifleman']],
-    objectives: [{ type: 'plant', at: [[-46, -34, 0], [46, -30, 1], [-40, 50, 1]] }, { type: 'extract', at: [44, 54] }],
+    id: 'dustdevil', name: 'Dust Devil', tag: 'Sabotage', env: 'storm', map: 'airbase', time: '1310 · Sandstorm', color: '#c9a46a', level: 2,
+    brief: 'A sandstorm has grounded the fighters at Wadi Kesh airfield. Plant charges on three SAM launchers in their revetments before it clears, then reach the extraction helicopter.',
+    start: [20, -57], startYaw: 0,
+    spawn: { max: 6, every: 4.5, heavy: 0.2, marks: 1 },
+    guards: [[-40, 13, 'rifleman'], [-35, 4, 'rifleman'], [14, -39, 'heavy'], [6, -38, 'rifleman'], [48, 21, 'rifleman'], [55, 37, 'rifleman'], [-10, 20, 'rifleman']],
+    objectives: [{ type: 'plant', at: [[-42, 6, 1], [10, -46, 0], [51, 29, 1]] }, { type: 'extract', at: [-5, 2] }],
   },
   {
-    id: 'blacksand', name: 'Black Sand', tag: 'Recon', env: 'night', time: '0210 · Night', color: '#7fd1c7', level: 2, stealth: true,
-    brief: 'Slip into the compound in the dark. Recover the courier\'s intel case from the warehouse yard, then get out. Guards carry flashlights. Night vision is on N and your flashlight on L.',
-    start: [-52, 52], startYaw: -2.4,
+    id: 'blacksand', name: 'Black Sand', tag: 'Recon', env: 'night', map: 'port', time: '0210 · Night', color: '#7fd1c7', level: 2, stealth: true,
+    brief: 'Slip into Port Tamar under the cranes. Recover the courier\'s intel case from the container stacks, then reach the helicopter. Guards carry flashlights. Night vision is on N and your flashlight on L.',
+    start: [-55, 55], startYaw: -0.81,
     spawn: { max: 6, every: 3.5, heavy: 0.15 },
-    guards: [[8, -40, 'rifleman'], [14, -44, 'rifleman'], [-6, -38, 'rifleman'], [20, -30, 'heavy'], [0, -16, 'rifleman'], [-24, -10, 'rifleman'], [26, 10, 'rifleman'], [-20, 20, 'rifleman']],
-    objectives: [{ type: 'intel', at: [9, -44] }, { type: 'extract', at: [-48, 48] }],
+    guards: [[10, -4, 'rifleman'], [20, -15, 'rifleman'], [6, -17, 'rifleman'], [-20, -8, 'heavy'], [36, -6, 'rifleman'], [-8, 12, 'rifleman'], [24, 12, 'rifleman'], [-40, 12, 'rifleman']],
+    objectives: [{ type: 'intel', at: [14, -10] }, { type: 'extract', at: [54, 30] }],
   },
   {
-    id: 'kingpin', name: 'Kingpin', tag: 'Assassination', env: 'rain', time: '1645 · Thunderstorm', color: '#9aa8b4', level: 3,
-    brief: 'The warlord known as the Jackal is meeting his lieutenants in the east block. Kill him before he reaches his convoy at the north-east gate, then extract.',
-    start: [-50, -10], startYaw: -Math.PI / 2,
-    spawn: { max: 6, every: 4, heavy: 0.25 },
-    guards: [[18, 20, 'rifleman'], [-10, 30, 'rifleman'], [10, -20, 'rifleman']],
-    objectives: [{ type: 'hvt', at: [30, 37], escape: [55, 56] }, { type: 'extract', at: [-48, -48] }],
+    id: 'kingpin', name: 'Kingpin', tag: 'Assassination', env: 'rain', map: 'village', time: '1645 · Thunderstorm', color: '#9aa8b4', level: 3,
+    brief: 'The warlord known as the Jackal is meeting his lieutenants in a walled compound in the mountain village of Shirin Dara. Kill him before he reaches his convoy at the north-east gate, then extract.',
+    start: [-56, -8], startYaw: -Math.PI / 2,
+    spawn: { max: 6, every: 4, heavy: 0.25, marks: 1 },
+    guards: [[18, 0, 'rifleman'], [-10, -14, 'rifleman'], [2, 20, 'rifleman'], [30, -20, 'rifleman']],
+    objectives: [{ type: 'hvt', at: [34, 19], escape: [57, 57] }, { type: 'extract', at: [-50, -50] }],
   },
   {
-    id: 'lastlight', name: 'Last Light', tag: 'Defend', env: 'sunset', time: '1902 · Sunset', color: '#e5703c', level: 4,
-    brief: 'Engineers are relaying satellite imagery through a field uplink by the monument. Keep it online for three minutes while the enemy throws everything at it.',
-    start: [4, 14], startYaw: 0, winText: 'Transfer complete',
+    id: 'lastlight', name: 'Last Light', tag: 'Defend', env: 'sunset', map: 'city', time: '1902 · Sunset', color: '#e5703c', level: 4,
+    brief: 'Engineers are relaying satellite imagery through a field uplink at a crossroads in the ruins of Haddar. Keep it online for three minutes while the enemy throws everything at it.',
+    start: [10, 20], startYaw: 0, winText: 'Transfer complete',
     spawn: { max: 9, every: 2.2, heavy: 0.3, marks: 2 },
-    objectives: [{ type: 'defend', at: [0, 9], duration: 180 }],
+    objectives: [{ type: 'defend', at: [12, 12], duration: 180 }],
   },
 ];
 let MISSION = MISSIONS[0];
@@ -3316,7 +3869,7 @@ function renderMissions() {
       ? (best.score ? `Best ${best.score.toLocaleString('en-US')} · ${best.wave} waves` : 'Not attempted')
       : (pr && pr.done ? `Complete · best ${fmtTime(pr.best)}` : 'Not attempted');
     card.innerHTML = `<div class="mnum"><span>OP ${String(i + 1).padStart(2, '0')} · <b>${M.tag.toUpperCase()}</b></span></div>
-      <h3>${M.name}</h3><div class="mtime">${M.time.toUpperCase()}</div><p>${M.brief}</p>
+      <h3>${M.name}</h3><div class="mtime">${MAPS[M.map || 'kessar'].name.toUpperCase()} · ${M.time.toUpperCase()}</div><p>${M.brief}</p>
       <div class="mfoot"><span class="mstat${pr && pr.done ? ' done' : ''}">${status}</span><button class="btn primary" type="button">Deploy</button></div>`;
     card.querySelector('button').addEventListener('click', () => startMission(M.id));
     grid.appendChild(card);
@@ -3372,7 +3925,8 @@ function resetRun() {
 function startMission(id) { MISSION = MISSIONS.find((m) => m.id === id) || MISSIONS[0]; startGame(); }
 function startGame() {
   Sfx.init();
-  applyEnv(MISSION.env);
+  const mapChanged = loadMap(MISSION.map || 'kessar');
+  applyEnv(MISSION.env, mapChanged);
   resetRun();
   G.mode = 'play';
   for (const s of Object.values(screens)) s.hidden = true;
