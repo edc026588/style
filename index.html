@@ -202,6 +202,50 @@ body.touch #killfeed { top: max(116px, calc(env(safe-area-inset-top, 0px) + 108p
   #compass { top: max(104px, calc(env(safe-area-inset-top, 0px) + 96px)); width: min(360px, 74vw); }
   body.touch #killfeed { top: max(156px, calc(env(safe-area-inset-top, 0px) + 148px)); }
 }
+
+/* ---------- Missions ---------- */
+#missions { background: linear-gradient(180deg, rgba(10, 13, 15, .86), rgba(10, 13, 15, .94)); }
+.mission-wrap { width: 100%; max-width: 1180px; margin: 0 auto; display: grid; gap: 24px; padding-inline: clamp(0px, 3vw, 40px); }
+.mission-head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; }
+.mission-head h2 { font-family: var(--f-display); font-weight: 900; font-size: clamp(44px, 7vw, 80px); line-height: .85; margin: 0; text-transform: uppercase; }
+.mission-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 14px; }
+.mcard { position: relative; display: grid; grid-template-rows: auto auto 1fr auto; gap: 10px; padding: 18px 20px 20px; background: var(--panel); border: 1px solid var(--line); overflow: hidden; }
+.mcard::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 4px; background: var(--sky, var(--amber)); }
+.mcard .mnum { font-family: var(--f-mono); font-size: 12px; letter-spacing: .14em; color: var(--bone-dim); display: flex; justify-content: space-between; gap: 10px; }
+.mcard .mnum b { color: var(--amber); font-weight: 400; }
+.mcard h3 { font-family: var(--f-display); font-weight: 900; font-size: 40px; line-height: .9; margin: 0; text-transform: uppercase; letter-spacing: .02em; }
+.mcard .mtime { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; color: var(--bone); }
+.mcard p { margin: 0; color: var(--bone-dim); font-size: 16px; line-height: 1.35; }
+.mcard .mfoot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.mcard .mstat { font-family: var(--f-mono); font-size: 12px; color: var(--bone-dim); }
+.mcard .mstat.done { color: var(--uav); }
+.mcard .btn { padding: 9px 18px; font-size: 16px; }
+
+/* ---------- Objectives ---------- */
+#objective { margin-top: 10px; display: grid; gap: 3px; max-width: min(360px, 60vw); }
+#objective small { font-size: 12px; letter-spacing: .22em; color: var(--amber); font-weight: 700; }
+#obj-text { font-size: 17px; font-weight: 600; letter-spacing: .03em; line-height: 1.2; }
+#obj-sub { font-family: var(--f-mono); font-size: 12px; color: var(--bone-dim); letter-spacing: .06em; }
+#uplink { width: 180px; height: 6px; background: rgba(236, 230, 214, .18); transform: skewX(-20deg); margin-top: 4px; }
+#uplink i { display: block; height: 100%; width: 100%; background: var(--uav); transition: width .2s; }
+#uplink.low i { background: var(--signal); }
+#objmarker { position: absolute; left: 0; top: 0; display: grid; justify-items: center; gap: 2px; transform: translate(-50%, -50%); pointer-events: none; }
+#objmarker .dia { width: 14px; height: 14px; border: 2px solid var(--amber); background: rgba(240, 165, 58, .25); transform: rotate(45deg); box-shadow: 0 0 6px rgba(0, 0, 0, .6); }
+#objmarker .lbl { font-size: 12px; font-weight: 700; letter-spacing: .16em; color: var(--amber); white-space: nowrap; }
+#objmarker .dst { font-family: var(--f-mono); font-size: 12px; color: var(--bone); }
+#objmarker.hvt .dia { border-color: var(--signal); background: rgba(229, 72, 60, .3); }
+#objmarker.hvt .lbl { color: var(--signal); }
+#objmarker.edge .dia { width: 10px; height: 10px; }
+#use { position: absolute; left: 50%; top: calc(50% + 70px); transform: translateX(-50%); display: grid; justify-items: center; gap: 6px; }
+#use .lbl { font-size: 15px; font-weight: 700; letter-spacing: .16em; }
+#use .bar { width: 200px; height: 5px; background: rgba(236, 230, 214, .2); }
+#use .bar i { display: block; height: 100%; width: 0; background: var(--amber); }
+#nvg-hint { font-family: var(--f-mono); font-size: 12px; color: var(--uav); letter-spacing: .08em; margin-top: 6px; }
+#game.nvg-css { filter: brightness(3.4) grayscale(1) sepia(1) hue-rotate(55deg) saturate(4) contrast(1.15); }
+#tb-use { right: max(210px, calc(env(safe-area-inset-right, 0px) + 180px)); bottom: max(310px, calc(env(safe-area-inset-bottom, 0px) + 300px)); border-color: var(--amber); }
+#tb-nvg { right: max(16px, env(safe-area-inset-right, 0px)); top: max(116px, calc(env(safe-area-inset-top, 0px) + 108px)); width: 44px; height: 44px; font-size: 11px; }
+#tb-light { right: max(68px, calc(env(safe-area-inset-right, 0px) + 52px)); top: max(116px, calc(env(safe-area-inset-top, 0px) + 108px)); width: 44px; height: 44px; font-size: 11px; }
+#gameover.won h2 { color: var(--amber); }
 @media (prefers-reduced-motion: reduce) {
   .pop, .kf, #strike-ready { animation: none; }
   #banner { transition: none; }
@@ -222,6 +266,8 @@ body.touch #killfeed { top: max(116px, calc(env(safe-area-inset-top, 0px) + 108p
     <div class="wave"><small>WAVE</small><span id="wave-num">1</span></div>
     <div id="hostiles">HOSTILES <b id="hostile-count">0</b></div>
     <div id="score">0</div>
+    <div id="objective" hidden><small>OBJECTIVE</small><div id="obj-text"></div><div id="obj-sub"></div><div id="uplink" hidden><i></i></div></div>
+    <div id="nvg-hint" hidden>N · NIGHT VISION &nbsp; L · FLASHLIGHT</div>
   </div>
   <div id="killfeed"></div>
   <div id="radar-wrap">
@@ -240,6 +286,8 @@ body.touch #killfeed { top: max(116px, calc(env(safe-area-inset-top, 0px) + 108p
   <div id="dmg-ind"></div>
   <div id="popups"></div>
   <div id="hint"></div>
+  <div id="objmarker" hidden><div class="dia"></div><div class="lbl"></div><div class="dst"></div></div>
+  <div id="use" hidden><div class="lbl"></div><div class="bar"><i></i></div></div>
   <div id="banner"><div class="k"></div><div class="t"></div></div>
 </div>
 
@@ -254,6 +302,9 @@ body.touch #killfeed { top: max(116px, calc(env(safe-area-inset-top, 0px) + 108p
   <button class="tb" id="tb-swap" type="button">SWAP</button>
   <button class="tb" id="tb-strike" type="button" hidden>AIR</button>
   <button class="tb" id="tb-pause" type="button">II</button>
+  <button class="tb" id="tb-use" type="button" hidden>USE</button>
+  <button class="tb" id="tb-nvg" type="button" hidden>NVG</button>
+  <button class="tb" id="tb-light" type="button" hidden>LIGHT</button>
 </div>
 
 <section id="menu" class="screen">
@@ -261,12 +312,12 @@ body.touch #killfeed { top: max(116px, calc(env(safe-area-inset-top, 0px) + 108p
     <div class="brief">
       <div class="grid-ref"><span>JTF ANVIL · OPORD 7-3</span><span>GRID 38S MB 4471 8830</span><span>0552 LOCAL</span></div>
       <h1 class="title"><span>Operation</span>Ironveil</h1>
-      <p class="lede">Kessar Compound, first light. Hold the crossroads against rolling assault waves. Ammo is scarce, marksmen watch the rooftops, and air support answers to your kill streak.</p>
+      <p class="lede">Five operations in the Kessar Compound, from first light to a night raid. Sabotage air defenses in a sandstorm, steal intel in the dark, hunt a warlord through a thunderstorm, hold an uplink at sunset, or survive the endless assault.</p>
       <div class="actions">
         <button id="btn-deploy" class="btn primary" type="button">Deploy</button>
         <button id="btn-settings" class="btn" type="button">Settings</button>
       </div>
-      <p class="best">Best score <b id="best-score">0</b> · Most waves held <b id="best-wave">0</b></p>
+      <p class="best">Operations complete <b id="best-ops">0/4</b> · Survival best <b id="best-score">0</b> · Waves <b id="best-wave">0</b></p>
       <p class="notice" id="notice" hidden></p>
     </div>
     <aside class="card" aria-label="Controls">
@@ -281,6 +332,8 @@ body.touch #killfeed { top: max(116px, calc(env(safe-area-inset-top, 0px) + 108p
         <dt><kbd>1</kbd>–<kbd>4</kbd> · Wheel</dt><dd>Switch weapon</dd>
         <dt><kbd>G</kbd> · <kbd>V</kbd></dt><dd>Frag grenade · melee</dd>
         <dt><kbd>B</kbd></dt><dd>Call airstrike on your aim point</dd>
+        <dt><kbd>E</kbd> hold</dt><dd>Plant charges, grab intel</dd>
+        <dt><kbd>N</kbd> · <kbd>L</kbd></dt><dd>Night vision · flashlight</dd>
         <dt><kbd>Esc</kbd></dt><dd>Pause</dd>
       </dl>
       <h2>Kill streaks</h2>
@@ -289,6 +342,16 @@ body.touch #killfeed { top: max(116px, calc(env(safe-area-inset-top, 0px) + 108p
         <li><b>6</b><span><strong>Airstrike.</strong> A jet drops a bomb line where you aim.</span></li>
       </ul>
     </aside>
+  </div>
+</section>
+
+<section id="missions" class="screen" hidden>
+  <div class="mission-wrap">
+    <div class="mission-head">
+      <div><p class="eyebrow">JTF Anvil · Kessar operations</p><h2>Select operation</h2></div>
+      <button id="btn-missions-back" class="btn" type="button">Back</button>
+    </div>
+    <div class="mission-grid" id="mission-grid"></div>
   </div>
 </section>
 
@@ -307,16 +370,17 @@ body.touch #killfeed { top: max(116px, calc(env(safe-area-inset-top, 0px) + 108p
 <section id="gameover" class="screen overlay" hidden>
   <div class="dialog">
     <p class="eyebrow" id="go-sub">Signal lost</p>
-    <h2>K.I.A.</h2>
+    <h2 id="go-title">K.I.A.</h2>
     <dl class="stats">
       <div class="hl"><dt>Score</dt><dd id="st-score">0</dd></div>
-      <div><dt>Waves held</dt><dd id="st-waves">0</dd></div>
+      <div><dt id="st-waves-label">Waves held</dt><dd id="st-waves">0</dd></div>
       <div><dt>Kills</dt><dd id="st-kills">0</dd></div>
       <div><dt>Headshots</dt><dd id="st-hs">0</dd></div>
       <div><dt>Accuracy</dt><dd id="st-acc">0%</dd></div>
       <div><dt>Best streak</dt><dd id="st-streak">0</dd></div>
     </dl>
     <div class="actions">
+      <button id="btn-next" class="btn primary" type="button" hidden>Next operation</button>
       <button id="btn-retry" class="btn primary" type="button">Redeploy</button>
       <button id="btn-menu" class="btn" type="button">Main menu</button>
     </div>

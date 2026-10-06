@@ -87,10 +87,15 @@ sun.shadow.normalBias = 0.035;
 // Aerial perspective: fog thins with altitude and glows toward the sun, applied to every lit material.
 const SUN_FOG = new THREE.Color(0xffc995).multiplyScalar(1.5);
 const glslV3 = (v) => `vec3(${v.x.toFixed(5)}, ${v.y.toFixed(5)}, ${v.z.toFixed(5)})`;
-const FOG_FN = `vec3 ivFogColor(vec3 dir, vec3 base){ return mix(base, ${glslV3({ x: SUN_FOG.r, y: SUN_FOG.g, z: SUN_FOG.b })}, pow(max(dot(dir, ${glslV3(SUN_DIR)}), 0.0), 5.0)); }\n`;
+// The sun direction and glow are baked into the fog chunk; a mission's lighting preset rewrites it and bumps FOG_VERSION,
+// which is part of every material's program key, so all materials recompile with the new values.
+let FOG_VERSION = 0;
+const fogFn = () => `vec3 ivFogColor(vec3 dir, vec3 base){ return mix(base, ${glslV3({ x: SUN_FOG.r, y: SUN_FOG.g, z: SUN_FOG.b })}, pow(max(dot(dir, ${glslV3(SUN_DIR)}), 0.0), 5.0)); }\n`;
+THREE.Material.prototype.customProgramCacheKey = function () { return this.onBeforeCompile.toString() + '|fog' + FOG_VERSION; };
+const installFog = () => { THREE.ShaderChunk.fog_pars_fragment = '#ifdef USE_FOG\n uniform vec3 fogColor;\n varying float vFogDepth;\n #if __VERSION__ >= 300\n  varying vec3 vFogWorld;\n #endif\n #ifdef FOG_EXP2\n  uniform float fogDensity;\n #else\n  uniform float fogNear;\n  uniform float fogFar;\n #endif\n' + fogFn() + '#endif'; };
 THREE.ShaderChunk.fog_pars_vertex = '#ifdef USE_FOG\n varying float vFogDepth;\n #if __VERSION__ >= 300\n  varying vec3 vFogWorld;\n #endif\n#endif';
 THREE.ShaderChunk.fog_vertex = '#ifdef USE_FOG\n vFogDepth = - mvPosition.z;\n #if __VERSION__ >= 300\n  vFogWorld = transpose(mat3(viewMatrix)) * (mvPosition.xyz - viewMatrix[3].xyz);\n #endif\n#endif';
-THREE.ShaderChunk.fog_pars_fragment = '#ifdef USE_FOG\n uniform vec3 fogColor;\n varying float vFogDepth;\n #if __VERSION__ >= 300\n  varying vec3 vFogWorld;\n #endif\n #ifdef FOG_EXP2\n  uniform float fogDensity;\n #else\n  uniform float fogNear;\n  uniform float fogFar;\n #endif\n' + FOG_FN + '#endif';
+installFog();
 THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
  #if __VERSION__ >= 300 && defined(FOG_EXP2)
   vec3 fogV = vFogWorld - cameraPosition; float fogD = length(fogV); vec3 fogDir = fogV / max(fogD, 0.001);
@@ -113,11 +118,13 @@ scene.fog.density = 0.0052;
 const skyUniforms = {
   uSunDir: { value: SUN_DIR }, uTurbidity: { value: 7.5 }, uRayleigh: { value: 2.2 }, uMie: { value: 0.006 }, uMieG: { value: 0.82 },
   uScale: { value: 0.5 }, uFog: { value: FOG_COLOR }, uSunCol: { value: new THREE.Color(0xffc48a).multiplyScalar(2.2) },
+  uSunFog: { value: SUN_FOG }, uCloud: { value: 0.5 }, uNight: { value: 0 }, uOvercast: { value: 0 }, uDust: { value: 0 }, uFlash: { value: 0 }, uTime: { value: 0 },
 };
 const SKY_VERT = `varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 const SKY_FRAG = `
-uniform vec3 uSunDir, uFog, uSunCol; uniform float uTurbidity, uRayleigh, uMie, uMieG, uScale; varying vec3 vDir;
-${FOG_FN}
+uniform vec3 uSunDir, uFog, uSunCol, uSunFog; uniform float uTurbidity, uRayleigh, uMie, uMieG, uScale, uCloud, uNight, uOvercast, uDust, uFlash, uTime; varying vec3 vDir;
+vec3 ivFogColor(vec3 dir, vec3 base){ return mix(base, uSunFog, pow(max(dot(dir, uSunDir), 0.0), 5.0)); }
+float hash3(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 const float PI = 3.14159265;
 const vec3 totalRayleigh = vec3(5.804542996261093E-6, 1.3562911419845635E-5, 3.0265902468824876E-5);
 const vec3 MieConst = vec3(1.8399918514433978E14, 2.7798023919660528E14, 4.0790479543861094E14);
@@ -145,20 +152,33 @@ vec3 preetham(vec3 dir){
 }
 void main(){
   vec3 d = normalize(vDir); float h = d.y;
-  vec3 col = preetham(vec3(d.x, max(h, 0.002), d.z)) * uScale;
   float cosT = dot(d, uSunDir);
-  if (h > 0.0) {
-    vec2 uv = d.xz / (h + 0.09) * 0.55;
-    float base = fbm(uv * 1.2 + vec2(2.0, 5.0));
-    float dens = smoothstep(0.5, 0.82, base + fbm(uv * 5.0) * 0.18) * smoothstep(0.0, 0.25, h);
-    float thick = smoothstep(0.55, 0.95, base);
-    vec3 amb = preetham(vec3(0.0, 1.0, 0.0)) * uScale * 1.4 + uFog * 0.25;
-    vec3 lit = uSunCol * (0.28 + 1.6 * pow(max(cosT, 0.0), 10.0)) * (1.0 - thick * 0.55);
-    col = mix(col, amb + lit, dens * 0.85);
+  vec3 col = uNight > 0.5 ? vec3(0.0) : preetham(vec3(d.x, max(h, 0.002), d.z)) * uScale;
+  if (uNight > 0.0) {
+    vec3 night = mix(vec3(0.010, 0.014, 0.026), vec3(0.0016, 0.0024, 0.006), smoothstep(0.0, 0.6, h));
+    vec3 sd = d * 420.0; vec3 cell = floor(sd);
+    float star = step(0.9965, hash3(cell)) * smoothstep(0.45, 0.0, length(fract(sd) - 0.5)) * smoothstep(0.02, 0.2, h);
+    night += vec3(0.75, 0.82, 1.0) * star * (0.6 + 0.4 * sin(uTime * 3.0 + hash3(cell + 7.0) * 40.0)) * 2.2;
+    night += vec3(0.85, 0.9, 1.0) * (smoothstep(0.99955, 0.99975, cosT) * 4.0 + pow(max(cosT, 0.0), 300.0) * 0.05);
+    col = mix(col, night, uNight);
   }
+  float dens = 0.0;
+  if (h > 0.0) {
+    vec2 uv = d.xz / (h + 0.09) * 0.55 + vec2(uTime * 0.004, 0.0);
+    float base = fbm(uv * 1.2 + vec2(2.0, 5.0));
+    float cover = mix(0.82, 0.38, uCloud);
+    dens = smoothstep(cover - 0.32, cover, base + fbm(uv * 5.0) * 0.18) * smoothstep(0.0, 0.25, h);
+    float thick = smoothstep(0.55, 0.95, base);
+    vec3 amb = (uNight > 0.5 ? vec3(0.003, 0.0045, 0.009) : preetham(vec3(0.0, 1.0, 0.0)) * uScale * 1.4) + uFog * (0.25 - uNight * 0.15);
+    vec3 lit = uSunCol * (0.28 + 1.6 * pow(max(cosT, 0.0), 10.0)) * (1.0 - thick * 0.55) * (1.0 - uOvercast * 0.85) * (1.0 - uNight * 0.97);
+    col = mix(col, amb + lit, dens * 0.85);
+    vec3 deck = uFog * (0.75 + 0.5 * base) * (1.0 - thick * 0.35);
+    col = mix(col, deck, uOvercast * smoothstep(-0.05, 0.15, h));
+  }
+  col += vec3(0.75, 0.82, 1.0) * uFlash * (0.5 + dens + uOvercast) * 2.5 * smoothstep(-0.05, 0.3, h);
   vec3 haze = ivFogColor(d, uFog);
-  col = mix(col, haze, h > 0.0 ? exp(-h * 16.0) * 0.92 : 1.0);
-  col += uSunCol * 1.2 * pow(max(cosT, 0.0), 900.0);
+  col = mix(col, haze, h > 0.0 ? max(exp(-h * 16.0) * 0.92, uDust * 0.9) : 1.0);
+  col += uSunCol * 1.2 * pow(max(cosT, 0.0), 900.0) * (1.0 - uOvercast) * (1.0 - uNight) * (1.0 - uDust * 0.7);
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -190,9 +210,22 @@ function captureEnvironment() {
   cam.updateMatrixWorld(true);
   skyMesh.position.copy(cam.position);
   const hemiI = hemi.intensity;
+  // Light the capture with the current sky alone; reusing the previous capture would carry daylight into night.
+  const skyScene = new THREE.Scene(); skyScene.add(makeSky(60));
+  const skyEnv = pmrem.fromScene(skyScene, 0.04);
+  const old = scene.environment;
+  scene.environment = skyEnv.texture;
+  // Local lights (burning wrecks, street lamps) would otherwise end up lighting the whole compound through the capture.
+  const fireI = fireLights.map((l) => l.intensity), lampI = MAT.lamp.emissiveIntensity;
+  fireLights.forEach((l) => { l.intensity = 0; }); MAT.lamp.emissiveIntensity = 0;
+  fxAdd.points.visible = false;
   cam.update(renderer, scene);
+  fireLights.forEach((l, i) => { l.intensity = fireI[i]; }); MAT.lamp.emissiveIntensity = lampI;
+  fxAdd.points.visible = true;
   const env = pmrem.fromCubemap(rt.texture).texture;
   scene.environment = env; vmScene.environment = env;
+  if (old && old !== env) old.dispose();
+  skyEnv.dispose();
   hemi.intensity = hemiI;
   rt.dispose();
 }
@@ -390,7 +423,7 @@ const containerSet = (hex) => {
     const [a, b, c, d] = NZ;
     const f = (u * 8) % 1;
     const prof = sstep(0.08, 0.2, f) - sstep(0.58, 0.7, f);
-    const rust = sstep(0.6, 0.7, a(u, v, 5, 5, 5) + (1 - v) * 0.16 + (1 - prof) * 0.04);
+    const rust = sstep(0.66, 0.74, a(u, v, 6, 6, 5) + (1 - v) * 0.14 + (1 - prof) * 0.04);
     const rail = v < 0.04 || v > 0.96;
     const dirt = sstep(0.25, 0.0, v) * 0.25 + (b(u, v, 3, 8, 3) - 0.5) * 0.12;
     let r = base.r, g = base.g, bl = base.b;
@@ -470,7 +503,7 @@ function weathered(mat, grime = 0.35, height = 1.6, vary = 0.2) {
     sh.fragmentShader = 'varying vec3 vWPos;\nuniform float uGrime, uGrimeH, uVary;\n' + WNOISE + sh.fragmentShader.replace('#include <map_fragment>',
       '#include <map_fragment>\n  float gN = wn(vWPos.xz * 0.45 + vWPos.y * 0.3);\n  diffuseColor.rgb *= mix(1.0 - uGrime * (0.6 + 0.8 * gN), 1.0, smoothstep(0.0, uGrimeH * (0.6 + 0.8 * gN), vWPos.y));\n  diffuseColor.rgb *= 1.0 - uVary * 0.5 + uVary * wn(vWPos.xz * 0.07 + vec2(vWPos.y * 0.05, 3.1));');
   };
-  mat.customProgramCacheKey = () => 'weathered';
+  mat.customProgramCacheKey = () => 'weathered|fog' + FOG_VERSION;
   return mat;
 }
 const MAT = {
@@ -542,9 +575,11 @@ const SPAWNS = [];
 const FIRES = [];
 const PLAYER_START = new V3(5, 0, 12);
 
+const roadMats = [];
 function road(cx, cz, len, width, alongX) {
   const [tex, nrm, rgh] = [PBR.road.map, PBR.road.normalMap, PBR.road.roughnessMap].map((t) => { const c = t.clone(); c.needsUpdate = true; c.repeat.set(len / width, 1); return c; });
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(len, width), std({ map: tex, normalMap: nrm, roughnessMap: rgh, roughness: 1 }));
+  const rm = std({ map: tex, normalMap: nrm, roughnessMap: rgh, roughness: 1 }); roadMats.push(rm);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(len, width), rm);
   m.rotation.set(-Math.PI / 2, 0, alongX ? 0 : Math.PI / 2);
   m.position.set(cx, 0.02, cz);
   m.receiveShadow = true;
@@ -977,8 +1012,41 @@ const Sfx = {
     const lfo = ctx.createOscillator(); lfo.frequency.value = 0.07;
     const lg = ctx.createGain(); lg.gain.value = 160; lfo.connect(lg); lg.connect(wf.frequency); lfo.start();
     wind.connect(wf); wf.connect(wg); wg.connect(this.master); wind.start();
+    this.windGain = wg;
+    this.setWeather(this.weather || null);
   },
   setVolume(v) { if (this.master) this.master.gain.value = v; },
+  setWeather(w) {
+    this.weather = w;
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.windGain.gain.setTargetAtTime(w === 'sand' ? 0.32 : w === 'rain' ? 0.1 : 0.06, t, 0.8);
+    if (!this.rainGain) {
+      const src = this.ctx.createBufferSource(); src.buffer = this.noiseBuf; src.loop = true;
+      const f = this.ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 2600; f.Q.value = 0.35;
+      this.rainGain = this.ctx.createGain(); this.rainGain.gain.value = 0;
+      src.connect(f); f.connect(this.rainGain); this.rainGain.connect(this.master); src.start();
+      const hsrc = this.ctx.createBufferSource(); hsrc.buffer = this.noiseBuf; hsrc.loop = true;
+      const hf = this.ctx.createBiquadFilter(); hf.type = 'lowpass'; hf.frequency.value = 140;
+      this.heliGain = this.ctx.createGain(); this.heliGain.gain.value = 0;
+      const am = this.ctx.createGain(); am.gain.value = 0.5;
+      const lfo = this.ctx.createOscillator(); lfo.frequency.value = 9; const lg = this.ctx.createGain(); lg.gain.value = 0.5;
+      lfo.connect(lg); lg.connect(am.gain); lfo.start();
+      hsrc.connect(hf); hf.connect(am); am.connect(this.heliGain); this.heliGain.connect(this.master); hsrc.start();
+    }
+    this.rainGain.gain.setTargetAtTime(w === 'rain' ? 0.16 : 0, t, 0.8);
+  },
+  heli(level) { if (this.heliGain) this.heliGain.gain.setTargetAtTime(level * 1.4, this.ctx.currentTime, 0.2); },
+  thunder(close) {
+    if (!this.ctx) return;
+    const b = this.bus(rand(-0.5, 0.5), 0.9);
+    if (close) this.noise(b, { dur: 0.35, type: 'highpass', freq: 1500, gain: 0.5 });
+    this.noise(b, { t: close ? 0.05 : 0, dur: 4.5, type: 'lowpass', freq: close ? 600 : 300, to: 50, gain: close ? 1.1 : 0.7, attack: 0.08 });
+  },
+  nvg() { if (!this.ctx) return; this.tone(this.bus(), { dur: 0.5, type: 'sine', f0: 3000, f1: 7000, gain: 0.05, attack: 0.05 }); },
+  beep() { if (!this.ctx) return; this.tone(this.bus(), { dur: 0.09, type: 'square', f0: 1760, gain: 0.08 }); },
+  alarm() { if (!this.ctx) return; const b = this.bus(0, 0.6); for (let i = 0; i < 4; i++) this.tone(b, { t: i * 0.5, dur: 0.45, type: 'sawtooth', f0: 520, f1: 760, gain: 0.07, attack: 0.05 }); },
+  victory() { if (!this.ctx) return; const b = this.bus(0, 0.5); [392, 523, 659, 784].forEach((f, i) => this.tone(b, { t: i * 0.16, dur: 0.9 - i * 0.1, type: 'triangle', f0: f, gain: 0.12, attack: 0.02 })); },
   bus(pan = 0, echo = 0) {
     const ctx = this.ctx, g = ctx.createGain();
     if (ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = clamp(pan, -1, 1); g.connect(p); p.connect(this.master); } else g.connect(this.master);
@@ -1403,7 +1471,8 @@ function buildViewmodel(id) {
 const vm = { root: new THREE.Group(), models: WEAPONS.map((w) => buildViewmodel(w.id)), adsT: 0, sprintT: 0, bobT: 0, swayX: 0, swayY: 0, kick: 0, raiseT: 0, meleeT: 0, throwT: 0, pumpT: 0, boltT: 0, flashT: 0 };
 for (const m of vm.models) { m.g.visible = false; vm.root.add(m.g); }
 vmScene.add(vm.root);
-vmScene.add(new THREE.HemisphereLight(0xb5c3d8, 0x5a4636, 0.9));
+const vmHemi = new THREE.HemisphereLight(0xb5c3d8, 0x5a4636, 0.9);
+vmScene.add(vmHemi);
 const vmSun = new THREE.DirectionalLight(0xffc896, 2.4);
 vmScene.add(vmSun, vmSun.target);
 const vmFlashLight = new THREE.PointLight(0xffb060, 0, 2, 2);
@@ -1417,6 +1486,7 @@ let shellIdx = 0;
 const ENEMY_TYPES = {
   rifleman: { name: 'Rifleman', hp: 100, speed: 3.1, run: 4.7, burst: [3, 5], interval: 0.12, pause: [0.9, 1.8], dmg: 9, acc: 0.42, range: [12, 26], score: 100, scale: 1, uniform: 0x6f6a4f, vest: 0x3c4032, visor: 0xffa640, react: 1 },
   heavy: { name: 'Juggernaut', hp: 250, speed: 2.3, run: 3.3, burst: [8, 14], interval: 0.085, pause: [1.5, 2.3], dmg: 7, acc: 0.33, range: [5, 13], score: 150, scale: 1.13, uniform: 0x34383b, vest: 0x1d1f21, visor: 0xff3a2a, react: 1.2 },
+  commander: { name: 'The Jackal', hp: 340, speed: 2.8, run: 5.0, burst: [3, 6], interval: 0.11, pause: [0.8, 1.4], dmg: 10, acc: 0.42, range: [10, 24], score: 500, scale: 1.02, uniform: 0x3a2a24, vest: 0x161616, visor: 0xff5533, react: 0.8 },
   marksman: { name: 'Marksman', hp: 90, static: true, dmg: 55, acc: 0.85, aim: 1.7, cooldown: 2.8, score: 150, scale: 1, uniform: 0x756d4c, vest: 0x4d4a35, visor: 0x9cf0ff, react: 1 },
 };
 const EG = {
@@ -1443,6 +1513,8 @@ const EM = {
   boot: std({ color: 0x2b241d, roughness: 0.9 }), skinMask: std({ color: 0x23231f, roughness: 0.95 }),
 };
 const hitboxMat = new THREE.MeshBasicMaterial({ visible: false });
+const beamGeo = new THREE.ConeGeometry(1.5, 12, 24, 1, true).translate(0, -6, 0).rotateX(Math.PI / 2);
+let beamMat, lensMat; // created with the mission textures
 // Rigged, animated soldier (Mixamo "Vanguard", shipped with the three.js examples). Until it loads, or if it can't,
 // enemies fall back to the built-in low-poly soldier.
 const SOLDIER = { ready: false };
@@ -1463,7 +1535,7 @@ const onSoldierLoaded = (gltf) => {
     .catch(noModel);
   loader.load('assets/soldier.glb', onSoldierLoaded, undefined, fromJson);
 }
-const SOLDIER_TINT = { rifleman: 0xa8a386, heavy: 0x6a6d6e, marksman: 0xc2ad86 };
+const SOLDIER_TINT = { rifleman: 0xa8a386, heavy: 0x6a6d6e, marksman: 0xc2ad86, commander: 0x6a3c32 };
 function buildRifle(g, long) {
   const add = (geo, mat, x, y, z, rx = 0) => { const m = P(g, geo, mat, x, y, z, rx); m.castShadow = true; return m; };
   add(B(0.05, 0.095, 0.22), EM.tan, 0, -0.02, 0.2);
@@ -1519,7 +1591,9 @@ function buildSoldier(type) {
     const lg = new THREE.BufferGeometry().setFromPoints([new V3(), new V3(0, 0, -1)]);
     laser = noAO(new THREE.Line(lg, laserMat)); laser.frustumCulled = false; laser.visible = false; scene.add(laser);
   }
-  const out = { root, body, legL, legR, gun, muzzle, flash, glint, laser, helmet, head, parts, mats: [uni, vest], rig: null };
+  const beam = noAO(new THREE.Mesh(beamGeo, beamMat)); beam.position.set(0, -0.03, muzzleZ + 0.12); beam.visible = !!ENV.night; gun.add(beam);
+  const lens = noAO(new THREE.Sprite(lensMat)); lens.scale.setScalar(0.35); lens.position.set(0, 0, -0.05); beam.add(lens);
+  const out = { root, body, legL, legR, gun, muzzle, flash, glint, laser, helmet, head, parts, mats: [uni, vest], rig: null, beam };
   if (SOLDIER.ready) {
     const model = cloneSkinned(SOLDIER.scene);
     model.scale.setScalar(SOLDIER.scale * T.scale);
@@ -1583,6 +1657,7 @@ class Enemy {
     this.strafe = 0; this.strafeT = 0; this.detour = 0; this.detourT = 0; this.stuckT = 0;
     this.walk = Math.random() * 6; this.flash = 0; this.flashT = 0; this.flinch = 0; this.revealUntil = -1; this.heardShot = -9;
     this.aimT = -rand(0.8, 1.6); this.spot = spot;
+    this.post = null; this.flee = null; this.upT = 0; this.upBurst = 0; this.wasAlerted = this.alerted;
     for (const p of this.m.parts) { p.userData.enemy = this; enemyParts.push(p); }
     this.m.root.position.copy(this.pos);
     this.m.root.rotation.y = this.yaw;
@@ -1638,7 +1713,9 @@ class Enemy {
     if (this.los) {
       const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
       const facing = (fx * dx + fz * dz) / distH;
-      const noticed = this.alerted || facing > 0.15 || distH < 12 || (G.time - G.lastShotT < 0.6 && distH < 55);
+      const per = (G.flashlight ? 1 : (ENV.perception || 1)) * (Pl.crouch ? 0.65 : Pl.sprinting ? 1.25 : 1);
+      const sees = distH < 110 * per && (facing > 0.15 || distH < 12 * per + 2);
+      const noticed = this.alerted || sees || (G.time - G.lastShotT < 0.6 && distH < 55);
       if (noticed && distH < 110) {
         if (!this.alerted) { this.alerted = true; this.reaction = rand(0.55, 0.95) * T.react; }
         this.lastKnown.copy(Pl.pos);
@@ -1648,11 +1725,27 @@ class Enemy {
       this.alerted = true; this.lastKnown.set(Pl.pos.x + rand(-5, 5), 0, Pl.pos.z + rand(-5, 5));
     }
     this.hadLos = this.los;
+    if (this.alerted && !this.wasAlerted) { this.wasAlerted = true; onEnemyAlert(this); }
 
     let mx = 0, mz = 0, speed = T.speed, fX = 0, fZ = 0;
+    const U = G.uplink && G.uplink.hp > 0 ? G.uplink.pos : null;
     if (T.static) {
       if (this.alerted) { fX = dx; fZ = dz; }
       this.updateMarksman(dt, distH);
+    } else if (this.flee && this.alerted) {
+      const tx = this.flee.x - this.pos.x, tz = this.flee.z - this.pos.z, d = Math.hypot(tx, tz) || 1;
+      mx = tx / d; mz = tz / d; speed = T.run; fX = mx; fZ = mz;
+      if (this.los && Pl.alive && distH < 30) { fX = dx; fZ = dz; this.shoot(dt, distH); }
+    } else if (U && !(this.alerted && this.los && distH < 26)) {
+      const ux = U.x - this.pos.x, uz = U.z - this.pos.z, ud = Math.hypot(ux, uz) || 1;
+      if (ud > 15) { mx = ux / ud; mz = uz / ud; speed = T.run * 0.85; fX = mx; fZ = mz; }
+      else {
+        fX = ux; fZ = uz;
+        this.strafeT -= dt;
+        if (this.strafeT <= 0) { this.strafeT = rand(1, 2.4); this.strafe = [-1, 1, 0][randInt(0, 2)]; }
+        mx = -uz / ud * this.strafe * 0.5; mz = ux / ud * this.strafe * 0.5; speed = T.speed * 0.6;
+        this.attackUplink(dt, U, distH);
+      }
     } else if (this.alerted && this.los && Pl.alive) {
       const nx = dx / distH, nz = dz / distH;
       fX = nx; fZ = nz;
@@ -1669,9 +1762,15 @@ class Enemy {
       this.burst = 0;
     } else {
       this.huntT -= dt;
-      if (this.huntT <= 0) { this.huntT = rand(3, 6); this.huntTarget.set(Pl.pos.x + rand(-14, 14), 0, Pl.pos.z + rand(-14, 14)); }
+      if (this.huntT <= 0) {
+        this.huntT = rand(3, 6);
+        const c = this.post || Pl.pos, r = this.post ? 6 : 14;
+        this.huntTarget.set(c.x + rand(-r, r), 0, c.z + rand(-r, r));
+        if (this.post && Math.random() < 0.35) this.huntTarget.copy(this.pos);
+      }
       const tx = this.huntTarget.x - this.pos.x, tz = this.huntTarget.z - this.pos.z, d = Math.hypot(tx, tz);
       if (d > 2) { mx = tx / d; mz = tz / d; }
+      if (this.post) speed = T.speed * 0.42;
       fX = mx; fZ = mz;
     }
 
@@ -1738,6 +1837,21 @@ class Enemy {
       this.pauseT -= dt;
       if (this.pauseT <= 0) this.burst = randInt(...this.T.burst);
     }
+  }
+  attackUplink(dt, U, distH) {
+    this.upT -= dt;
+    if (this.upT > 0) return;
+    if (this.upBurst <= 0) { this.upBurst = randInt(...this.T.burst); this.upT = rand(...this.T.pause); return; }
+    this.upBurst--; this.upT = this.T.interval * rand(0.9, 1.2);
+    const m = this.m;
+    m.muzzle.getWorldPosition(_a);
+    _c.set(U.x + rand(-0.8, 0.8), rand(0.4, 3.5), U.z + rand(-0.8, 0.8));
+    spawnTracer(_a, _c, false);
+    m.flash.visible = true; m.flash.material.rotation = Math.random() * 6; this.flashT = 0.05;
+    impactFX(_c, _d.subVectors(_a, _c).normalize(), false, 'metal');
+    Sfx.enemyShot(distH, panFor(this.pos), this.type === 'heavy');
+    this.revealUntil = G.time + 1.6;
+    G.uplink.hp -= this.T.dmg * 0.032; G.uplink.hitT = G.time;
   }
   hitChance(dist) {
     const Pl = player;
@@ -1831,7 +1945,7 @@ const player = {
   onGround: true, crouch: false, slide: 0, sprinting: false, eye: 1.62, hp: 100, lastHurt: -99, alive: true, bobT: 0, stepSign: 1, roll: 0,
 };
 const input = { keys: {}, fire: false, fireQueued: false, ads: false, jump: false, lookDX: 0, lookDY: 0 };
-const touch = { moveX: 0, moveY: 0, fire: false, ads: false, sprint: false };
+const touch = { moveX: 0, moveY: 0, fire: false, ads: false, sprint: false, use: false };
 
 function panFor(p) {
   const bearing = Math.atan2(p.x - player.pos.x, -(p.z - player.pos.z));
@@ -1851,12 +1965,12 @@ function hurtPlayer(dmg, from, explosive = false) {
   if (player.hp <= 0) die();
 }
 function die() {
-  player.hp = 0; player.alive = false; G.mode = 'dead'; G.deathT = 0; G.timeScale = 0.35;
+  player.hp = 0; player.alive = false; G.mode = 'dead'; G.deathT = 0; G.timeScale = 0.35; G.result = 'kia'; G.missionTime = G.time;
   canvas.classList.add('dying');
   ws.reloading = false;
   showBanner('Man down', 'You were killed', 'danger', 2.2);
   const best = store.get('best', { score: 0, wave: 0 });
-  if (G.score > best.score || G.wavesCleared > best.wave) store.set('best', { score: Math.max(best.score, G.score), wave: Math.max(best.wave, G.wavesCleared) });
+  if (MISSION.mode === 'waves' && (G.score > best.score || G.wavesCleared > best.wave)) store.set('best', { score: Math.max(best.score, G.score), wave: Math.max(best.wave, G.wavesCleared) });
   setTimeout(showGameOver, 2300);
 }
 function updatePlayer(dt) {
@@ -2507,6 +2621,12 @@ function drawCompass() {
     c.fillStyle = '#e5483c';
     c.beginPath(); c.moveTo(x, 30); c.lineTo(x + 4, 35); c.lineTo(x, 40); c.lineTo(x - 4, 35); c.fill();
   }
+  if (G.objPoint) {
+    const rel = THREE.MathUtils.radToDeg(wrapAngle(bearingOf(G.objPoint) + player.yaw));
+    const x = mid + clamp(rel, -span / 2, span / 2) * ppd;
+    c.strokeStyle = '#f0a53a'; c.lineWidth = 2;
+    c.beginPath(); c.moveTo(x, 29); c.lineTo(x + 5, 34); c.lineTo(x, 39); c.lineTo(x - 5, 34); c.closePath(); c.stroke();
+  }
   c.fillStyle = '#f0a53a';
   c.beginPath(); c.moveTo(mid - 5, 0); c.lineTo(mid + 5, 0); c.lineTo(mid, 6); c.fill();
 }
@@ -2530,6 +2650,12 @@ function drawRadar() {
   }
   c.fillStyle = '#f0a53a';
   for (const pk of pickups) { c.beginPath(); c.arc(pk.g.position.x, pk.g.position.z, 2.5 / sc, 0, 7); c.fill(); }
+  if (G.objPoint) {
+    const o = G.objPoint, r = 4.5 / sc;
+    c.save(); c.translate(o.x, o.z); c.rotate(-Pl.yaw + Math.PI / 4);
+    c.fillStyle = 'rgba(240,165,58,.35)'; c.strokeStyle = '#f0a53a'; c.lineWidth = 1.5 / sc;
+    c.fillRect(-r, -r, r * 2, r * 2); c.strokeRect(-r, -r, r * 2, r * 2); c.restore();
+  }
   if (strikeMark && G.time < strikeMark.until + 3) { c.strokeStyle = '#f0a53a'; c.lineWidth = 2 / sc; c.beginPath(); c.arc(strikeMark.p.x, strikeMark.p.z, 8, 0, 7); c.stroke(); }
   const uav = G.time < G.uavUntil;
   for (const e of enemies) {
@@ -2569,6 +2695,7 @@ function updateHUD(dt) {
   const alive = enemies.filter((e) => !e.dead).length;
   setText(hud.waveNum, 'wave', String(Math.max(1, G.wave)));
   setText(hud.hostiles, 'host', String(G.toSpawn + G.marksToSpawn + alive));
+  updateMissionHUD();
   setText(hud.score, 'score', G.score.toLocaleString('en-US'));
   setText(hud.mag, 'mag', String(S.mag));
   setText(hud.res, 'res', `/ ${S.reserve}`);
@@ -2614,8 +2741,590 @@ function drawGrain() {
   gctx.putImageData(grainImg, 0, 0);
 }
 
+// ---------------------------------------------------------------- time of day and weather
+const ENVS = {
+  dawn: {
+    sun: [-0.55, 0.3, -0.78], sunCol: 0xffc896, sunI: 3.4, hemi: [0xb4c2d8, 0x7a5f48, 0.3], fog: 0xbba48e, fogD: 0.0052, sunFog: [0xffc995, 1.5],
+    sky: { turb: 7.5, ray: 2.2, mie: 0.006, scale: 0.5, cloud: 0.5, sunCol: [0xffc48a, 2.2] }, exposure: 1,
+  },
+  storm: {
+    sun: [0.3, 0.82, -0.35], sunCol: 0xffd5a0, sunI: 0.95, hemi: [0xc9a676, 0x6a4c30, 0.75], fog: 0x8f6a44, fogD: 0.058, sunFog: [0xc8a070, 1.1],
+    sky: { turb: 16, ray: 1.2, mie: 0.02, scale: 0.42, cloud: 0.25, dust: 1, sunCol: [0xfff0d4, 1.5] }, exposure: 0.95, weather: 'sand', perception: 0.55,
+  },
+  night: {
+    sun: [0.42, 0.52, 0.55], sunCol: 0x9fb6e6, sunI: 0.32, hemi: [0x34445f, 0x100e0c, 0.09], fog: 0x0c1119, fogD: 0.014, sunFog: [0x3c4a64, 1],
+    sky: { turb: 2, ray: 1, mie: 0.004, scale: 0.5, cloud: 0.3, night: 1, sunCol: [0xd8e4ff, 1.4] }, exposure: 1.25, night: true, perception: 0.35,
+  },
+  rain: {
+    sun: [0.3, 0.62, -0.55], sunCol: 0xc6d0da, sunI: 0.8, hemi: [0x9aa4ae, 0x4a4640, 0.85], fog: 0x7c848c, fogD: 0.013, sunFog: [0x9aa2aa, 1],
+    sky: { turb: 10, ray: 1, mie: 0.01, scale: 0.4, cloud: 0.9, overcast: 1, sunCol: [0xc0c8d0, 0.8] }, exposure: 1.1, weather: 'rain', wet: true, perception: 0.75,
+  },
+  sunset: {
+    sun: [0.82, 0.1, 0.3], sunCol: 0xff8f4e, sunI: 3.0, hemi: [0x9b8cb4, 0x6a4a3a, 0.32], fog: 0xb27c60, fogD: 0.0062, sunFog: [0xff9a5c, 1.9],
+    sky: { turb: 9, ray: 3, mie: 0.008, scale: 0.5, cloud: 0.6, sunCol: [0xff8c52, 2.6] }, exposure: 1,
+  },
+};
+let ENV = ENVS.dawn, envName = 'dawn';
+const baseLook = new Map();
+const wetMats = () => [MAT.sand, MAT.concrete, MAT.perimeter, MAT.barrier, MAT.roof, MAT.crate, MAT.sandbag, MAT.wallTan, MAT.wallOchre, MAT.wallGrey, ...roadMats];
+function applyEnv(name) {
+  if (name === envName) return false;
+  const E = ENV = ENVS[name]; envName = name;
+  SUN_DIR.set(...E.sun).normalize();
+  sun.color.setHex(E.sunCol); sun.intensity = E.sunI;
+  hemi.color.setHex(E.hemi[0]); hemi.groundColor.setHex(E.hemi[1]); hemi.intensity = E.hemi[2];
+  FOG_COLOR.setHex(E.fog); scene.fog.color.setHex(E.fog); scene.fog.density = E.fogD;
+  SUN_FOG.setHex(E.sunFog[0]).multiplyScalar(E.sunFog[1]);
+  const k = E.sky, u = skyUniforms;
+  u.uTurbidity.value = k.turb; u.uRayleigh.value = k.ray; u.uMie.value = k.mie; u.uScale.value = k.scale; u.uCloud.value = k.cloud;
+  u.uNight.value = k.night || 0; u.uOvercast.value = k.overcast || 0; u.uDust.value = k.dust || 0;
+  u.uSunCol.value.setHex(k.sunCol[0]).multiplyScalar(k.sunCol[1]);
+  for (const m of wetMats()) {
+    if (!baseLook.has(m)) baseLook.set(m, { r: m.roughness, c: m.color.clone() });
+    const b = baseLook.get(m);
+    m.roughness = b.r * (E.wet ? 0.4 : 1); m.color.copy(b.c).multiplyScalar(E.wet ? 0.7 : 1);
+  }
+  MAT.lamp.emissiveIntensity = E.night ? 8 : 1.6;
+  vmSun.color.setHex(E.sunCol); vmSun.intensity = E.sunI * 0.7;
+  vmHemi.intensity = clamp(E.hemi[2] * 3, 0.2, 1.3);
+  rain.visible = E.weather === 'rain'; sandstorm.visible = E.weather === 'sand';
+  for (const e of enemies) if (e.m.beam) e.m.beam.visible = !!E.night;
+  installFog(); FOG_VERSION++;
+  const touchMat = (o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.needsUpdate = true; }); };
+  scene.traverse(touchMat); vmScene.traverse(touchMat);
+  Sfx.setWeather(E.weather || null);
+  captureEnvironment();
+  return true;
+}
+
+TEX.puff = (() => {
+  const s = 64, c = document.createElement('canvas'); c.width = c.height = s;
+  const g = c.getContext('2d'), grd = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(0.5, 'rgba(255,255,255,.35)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, s, s);
+  return new THREE.CanvasTexture(c);
+})();
+TEX.beam = (() => {
+  const c = document.createElement('canvas'); c.width = 4; c.height = 128;
+  const g = c.getContext('2d'), grd = g.createLinearGradient(0, 0, 0, 128);
+  grd.addColorStop(0, '#fff'); grd.addColorStop(0.35, '#555'); grd.addColorStop(1, '#000');
+  g.fillStyle = grd; g.fillRect(0, 0, 4, 128);
+  return new THREE.CanvasTexture(c);
+})();
+beamMat = new THREE.MeshBasicMaterial({ color: 0xfff1d2, alphaMap: TEX.beam, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+lensMat = new THREE.SpriteMaterial({ map: TEX.flash, color: new THREE.Color(3, 2.8, 2.4), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
+// Rain: streaks falling through a box that follows the camera.
+const RAIN_N = 3200;
+const rainDrops = new Float32Array(RAIN_N * 3), rainPos = new Float32Array(RAIN_N * 6);
+for (let i = 0; i < RAIN_N; i++) { rainDrops[i * 3] = rand(-24, 24); rainDrops[i * 3 + 1] = rand(0, 20); rainDrops[i * 3 + 2] = rand(-24, 24); }
+const rainGeo = new THREE.BufferGeometry();
+rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3).setUsage(THREE.DynamicDrawUsage));
+const rain = noAO(new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({ color: 0xc4ccd6, transparent: true, opacity: 0.34, depthWrite: false })));
+rain.frustumCulled = false; rain.visible = false; scene.add(rain);
+// Sandstorm: soft dust clouds driven by a gusting wind.
+const SAND_N = 1400;
+const sandPos = new Float32Array(SAND_N * 3);
+for (let i = 0; i < SAND_N; i++) { sandPos[i * 3] = rand(-30, 30); sandPos[i * 3 + 1] = rand(0, 12); sandPos[i * 3 + 2] = rand(-30, 30); }
+const sandGeo = new THREE.BufferGeometry();
+sandGeo.setAttribute('position', new THREE.BufferAttribute(sandPos, 3).setUsage(THREE.DynamicDrawUsage));
+const sandstorm = noAO(new THREE.Points(sandGeo, new THREE.PointsMaterial({ map: TEX.puff, color: 0x8a6a46, size: 2.8, transparent: true, opacity: 0.45, depthWrite: false })));
+sandstorm.frustumCulled = false; sandstorm.visible = false; scene.add(sandstorm);
+const GRIT_N = 1600, gritP = new Float32Array(GRIT_N * 3), gritPos = new Float32Array(GRIT_N * 6);
+for (let i = 0; i < GRIT_N; i++) { gritP[i * 3] = rand(-18, 18); gritP[i * 3 + 1] = rand(0, 5); gritP[i * 3 + 2] = rand(-18, 18); }
+const gritGeo = new THREE.BufferGeometry();
+gritGeo.setAttribute('position', new THREE.BufferAttribute(gritPos, 3).setUsage(THREE.DynamicDrawUsage));
+const grit = noAO(new THREE.LineSegments(gritGeo, new THREE.LineBasicMaterial({ color: 0xd8b585, transparent: true, opacity: 0.3, depthWrite: false })));
+grit.frustumCulled = false; sandstorm.add(grit);
+// Player flashlight: always in the scene (dark when off) so toggling it never recompiles shaders.
+const flashlight = new THREE.SpotLight(0xfff0d8, 0, 45, 0.4, 0.55, 2);
+scene.add(flashlight, flashlight.target);
+const weather = { lightT: 7, flash: 0, gust: 0 };
+function updateWeather(rdt) {
+  const cx = camera.position.x, cz = camera.position.z;
+  if (rain.visible) {
+    const wind = 2.5;
+    for (let i = 0; i < RAIN_N; i++) {
+      const j = i * 3;
+      rainDrops[j + 1] -= 21 * rdt; rainDrops[j] += wind * rdt;
+      let x = rainDrops[j], z = rainDrops[j + 2];
+      if (rainDrops[j + 1] < 0) { rainDrops[j + 1] += 20; x = rainDrops[j] = rand(-24, 24) + cx; z = rainDrops[j + 2] = rand(-24, 24) + cz; }
+      if (x - cx > 24) x = rainDrops[j] -= 48; else if (x - cx < -24) x = rainDrops[j] += 48;
+      if (z - cz > 24) z = rainDrops[j + 2] -= 48; else if (z - cz < -24) z = rainDrops[j + 2] += 48;
+      const y = rainDrops[j + 1], k = i * 6;
+      rainPos[k] = x; rainPos[k + 1] = y; rainPos[k + 2] = z;
+      rainPos[k + 3] = x - wind * 0.025; rainPos[k + 4] = y + 0.55; rainPos[k + 5] = z;
+    }
+    rainGeo.attributes.position.needsUpdate = true;
+    for (let i = 0; i < 2; i++) {
+      const a = Math.random() * 6.28, r = rand(1, 14), x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+      fxSmoke.spawn(x, groundHeightAt(x, z, 30, 0.05) + 0.03, z, rand(-0.4, 0.4), rand(0.8, 1.6), rand(-0.4, 0.4), 0.75, 0.8, 0.85, 0.07, 0.22, { grav: 7, drag: 1, alpha: 0.55 });
+    }
+    weather.lightT -= rdt;
+    if (weather.lightT <= 0) {
+      weather.lightT = rand(7, 18); weather.flash = 1;
+      const delay = rand(0.5, 2.6);
+      setTimeout(() => Sfx.thunder(delay < 1.2), delay * 1000);
+    }
+  }
+  weather.flash = Math.max(0, weather.flash - rdt * 2.2);
+  const fl = weather.flash > 0 ? (Math.sin(weather.flash * 40) > -0.3 ? weather.flash : weather.flash * 0.2) : 0;
+  skyUniforms.uFlash.value = fl;
+  hemi.intensity = ENV.hemi[2] + fl * 2.4;
+  skyUniforms.uTime.value = performance.now() / 1000;
+  if (sandstorm.visible) {
+    weather.gust = 9 + Math.sin(performance.now() / 1000 * 0.7) * 4 + Math.sin(performance.now() / 1000 * 2.3) * 2;
+    for (let i = 0; i < SAND_N; i++) {
+      const j = i * 3;
+      sandPos[j] += weather.gust * rdt; sandPos[j + 2] += weather.gust * 0.35 * rdt; sandPos[j + 1] += Math.sin(i + performance.now() / 700) * 0.6 * rdt;
+      if (sandPos[j] - cx > 30) sandPos[j] -= 60; else if (sandPos[j] - cx < -30) sandPos[j] += 60;
+      if (sandPos[j + 2] - cz > 30) sandPos[j + 2] -= 60; else if (sandPos[j + 2] - cz < -30) sandPos[j + 2] += 60;
+      if (sandPos[j + 1] > 12) sandPos[j + 1] -= 12; else if (sandPos[j + 1] < 0) sandPos[j + 1] += 12;
+    }
+    sandGeo.attributes.position.needsUpdate = true;
+    const gx = weather.gust * 2.2, gz = weather.gust * 0.75;
+    for (let i = 0; i < GRIT_N; i++) {
+      const j = i * 3;
+      gritP[j] += gx * rdt; gritP[j + 2] += gz * rdt;
+      if (gritP[j] - cx > 18) { gritP[j] -= 36; gritP[j + 1] = rand(0, 5); } else if (gritP[j] - cx < -18) gritP[j] += 36;
+      if (gritP[j + 2] - cz > 18) gritP[j + 2] -= 36; else if (gritP[j + 2] - cz < -18) gritP[j + 2] += 36;
+      const k = i * 6;
+      gritPos[k] = gritP[j]; gritPos[k + 1] = gritP[j + 1]; gritPos[k + 2] = gritP[j + 2];
+      gritPos[k + 3] = gritP[j] - gx * 0.03; gritPos[k + 4] = gritP[j + 1]; gritPos[k + 5] = gritP[j + 2] - gz * 0.03;
+    }
+    gritGeo.attributes.position.needsUpdate = true;
+  }
+  _fwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
+  _right.set(1, 0, 0).applyQuaternion(camera.quaternion);
+  flashlight.position.copy(camera.position).addScaledVector(_right, 0.25).add(_up.set(0, -0.2, 0));
+  flashlight.target.position.copy(camera.position).addScaledVector(_fwd, 12);
+  flashlight.intensity = G.flashlight && G.mode !== 'menu' ? 16 : 0;
+}
+function setNVG(on) {
+  G.nvg = !!on && !!ENV.night;
+  canvas.classList.toggle('nvg-css', G.nvg && !HIGH());
+  if (G.nvg) Sfx.nvg();
+}
+function toggleFlashlight() { if (G.mode !== 'play') return; G.flashlight = !G.flashlight; Sfx.mech(0, 2600, 0.2); }
+
+// ---------------------------------------------------------------- mission props
+const missionObjs = [], missionCols = [], missionFires = [];
+let heli = null;
+function addMissionObj(o) { scene.add(o); missionObjs.push(o); return o; }
+function addMissionCol(x0, y0, z0, x1, y1, z1, surf = 'metal') { const c = addCollider(x0, y0, z0, x1, y1, z1, surf); missionCols.push(c); return c; }
+function clearMission() {
+  for (const o of missionObjs) scene.remove(o);
+  missionObjs.length = 0;
+  for (const c of missionCols) { const i = colliders.indexOf(c); if (i >= 0) colliders.splice(i, 1); }
+  missionCols.length = 0; missionFires.length = 0;
+  G.uplink = null; G.obj = null; G.objPoint = null; heli = null;
+  Sfx.heli(0);
+}
+function freeSpot(x, z, r) {
+  for (let k = 0; k < 80; k++) {
+    const a = k * 2.4, d = k * 0.7, px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d;
+    if (Math.abs(px) < HALF - r - 1 && Math.abs(pz) < HALF - r - 1 && areaFree(px, pz, r)) return new V3(px, 0, pz);
+  }
+  return new V3(x, 0, z);
+}
+const propMat = std({ color: 0x59603f, roughness: 1, metalness: 0.3, roughnessMap: PBR.wear.roughnessMap, normalMap: PBR.wear.normalMap });
+const propDark = std({ color: 0x24272a, roughness: 0.8, metalness: 0.5, roughnessMap: PBR.wear.roughnessMap });
+const ledMat = (hex) => new THREE.SpriteMaterial({ map: TEX.flash, color: new THREE.Color(hex).multiplyScalar(3), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
+function led(parent, hex, x, y, z, s = 0.35) { const sp = noAO(new THREE.Sprite(ledMat(hex))); sp.position.set(x, y, z); sp.scale.setScalar(s); parent.add(sp); return sp; }
+function shadowed(g) { g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } }); return g; }
+function buildSAM(p, rot) {
+  const g = new THREE.Group(); g.position.copy(p); g.rotation.y = rot ? Math.PI / 2 : 0;
+  P(g, B(2.5, 0.9, 5.6), propMat, 0, 0.95, 0);
+  P(g, B(2.4, 1.4, 1.7), propMat, 0, 2.0, -2.0);
+  P(g, B(2.1, 0.55, 0.06), MAT.glass, 0, 2.25, -2.86);
+  const wg = new THREE.CylinderGeometry(0.55, 0.55, 0.42, 16);
+  for (const sx of [-1.28, 1.28]) for (const sz of [-1.9, 0.1, 1.9]) P(g, wg, MAT.tire, sx, 0.55, sz, 0, 0, Math.PI / 2);
+  P(g, new THREE.CylinderGeometry(0.8, 0.95, 0.5, 18), propMat, 0, 1.65, 1.0);
+  const L = new THREE.Group(); L.position.set(0, 2.2, 1.0); L.rotation.x = 0.55; g.add(L);
+  for (const tx of [-0.33, 0.33]) for (const ty of [-0.3, 0.3]) {
+    P(L, CZ(0.28, 0.28, 3.8, 16), propMat, tx, ty, -0.6);
+    P(L, new THREE.CircleGeometry(0.24, 14), propDark, tx, ty, -2.51, 0, Math.PI);
+  }
+  P(L, B(1.5, 0.14, 2.6), propDark, 0, -0.62, -0.4);
+  P(g, new THREE.SphereGeometry(0.45, 14, 6, 0, Math.PI * 2, 0, 1), MAT.metal, 0, 3.05, -2.0, -0.4);
+  const charge = new THREE.Group(); charge.position.set(1.3, 1.05, 0.4); charge.visible = false; g.add(charge);
+  P(charge, B(0.12, 0.26, 0.38), propDark, 0, 0, 0);
+  const chargeLed = led(charge, 0xff2a1a, 0.08, 0.1, 0, 0.3);
+  addMissionObj(shadowed(g));
+  const w = rot ? 5.8 : 2.7, d = rot ? 2.7 : 5.8;
+  addMissionCol(p.x - w / 2, 0, p.z - d / 2, p.x + w / 2, 2.7, p.z + d / 2);
+  return { g, L, charge, chargeLed };
+}
+function buildIntel(p) {
+  const g = new THREE.Group(); g.position.copy(p);
+  P(g, B(1.0, 0.9, 0.8), MAT.crate, 0, 0.45, 0);
+  const kase = new THREE.Group(); kase.position.set(0, 0.97, 0); g.add(kase);
+  P(kase, B(0.5, 0.13, 0.36), propDark, 0, 0, 0);
+  P(kase, B(0.16, 0.05, 0.03), MAT.metal, 0, 0.09, 0);
+  const l = led(kase, 0x40ff80, 0.2, 0.08, 0.19, 0.22);
+  addMissionObj(shadowed(g));
+  addMissionCol(p.x - 0.5, 0, p.z - 0.4, p.x + 0.5, 0.9, p.z + 0.4, 'wood');
+  return { g, kase, led: l };
+}
+function buildUplink(p) {
+  const g = new THREE.Group(); g.position.copy(p);
+  P(g, B(1.7, 1.0, 1.1), propMat, 0, 0.5, 0);
+  P(g, B(0.5, 0.3, 0.9), propDark, -0.6, 1.1, 0);
+  P(g, new THREE.CylinderGeometry(0.06, 0.1, 7.5, 10), MAT.darkMetal, 0.5, 3.75, 0);
+  const dish = P(g, new THREE.SphereGeometry(0.9, 20, 8, 0, Math.PI * 2, 0, 1.0), MAT.metal, 0.5, 5.4, 0.3, -1.0);
+  dish.material = MAT.metal;
+  P(g, CZ(0.03, 0.03, 0.9, 6), MAT.darkMetal, 0.5, 5.5, 0.75);
+  const beacon = led(g, 0xff3020, 0.5, 7.6, 0, 0.6);
+  const wireMat = new THREE.LineBasicMaterial({ color: 0x1a1a1a });
+  for (const [x, z] of [[3.5, 0], [-2.5, 2.5], [-2.5, -2.5]]) g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new V3(0.5, 6.5, 0), new V3(x, 0.02, z)]), wireMat));
+  addMissionObj(shadowed(g));
+  addMissionCol(p.x - 0.85, 0, p.z - 0.55, p.x + 0.85, 1.4, p.z + 0.55);
+  return { g, beacon };
+}
+function buildHeli() {
+  const g = new THREE.Group();
+  const body = std({ color: 0x3e4636, roughness: 1, metalness: 0.35, roughnessMap: PBR.wear.roughnessMap, normalMap: PBR.wear.normalMap });
+  const fus = P(g, new THREE.CapsuleGeometry(1.15, 3.4, 8, 16).rotateX(Math.PI / 2), body, 0, 0, 0); fus.scale.set(1, 0.92, 1);
+  P(g, new THREE.SphereGeometry(1.08, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(-Math.PI / 2), std({ color: 0x18222a, metalness: 0.9, roughness: 0.08 }), 0, 0.15, -2.15);
+  P(g, B(1.3, 0.7, 2.6), body, 0, 1.15, 0.4);
+  P(g, CZ(0.36, 0.18, 6.4, 12), body, 0, 0.45, 5.0);
+  P(g, B(0.14, 1.5, 0.9), body, 0, 1.15, 7.9);
+  P(g, B(2.2, 0.08, 0.6), body, 0, 0.55, 7.4);
+  const rotor = new THREE.Group(); rotor.position.set(0, 1.75, 0.2); g.add(rotor);
+  P(rotor, new THREE.CylinderGeometry(0.12, 0.12, 0.5, 10), propDark, 0, -0.15, 0);
+  for (let i = 0; i < 4; i++) { const b = P(rotor, B(5.6, 0.05, 0.32), propDark, 0, 0.1, 0); b.rotation.y = (i / 4) * Math.PI; b.position.set(0, 0.1, 0); b.geometry = b.geometry.clone().translate(2.8, 0, 0); }
+  const disc = noAO(new THREE.Mesh(new THREE.CircleGeometry(5.7, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.12, depthWrite: false })));
+  disc.position.y = 0.1; rotor.add(disc);
+  const tail = new THREE.Group(); tail.position.set(0.18, 1.3, 7.95); g.add(tail);
+  for (let i = 0; i < 2; i++) { const b = P(tail, B(0.04, 1.5, 0.16), propDark, 0, 0, 0); b.rotation.x = (i / 2) * Math.PI; }
+  for (const sx of [-1.05, 1.05]) {
+    P(g, CZ(0.06, 0.06, 4.6, 8), propDark, sx, -1.3, 0.2);
+    for (const sz of [-1.2, 1.4]) P(g, new THREE.CylinderGeometry(0.05, 0.05, 0.75, 6), propDark, sx * 0.85, -0.95, sz, 0, 0, sx * 0.25);
+  }
+  led(g, 0xff2a1a, -1.2, 0.2, 0.6, 0.35); led(g, 0x2aff60, 1.2, 0.2, 0.6, 0.35);
+  shadowed(g);
+  return { g, rotor, tail };
+}
+function spawnHeli(lz) {
+  const h = buildHeli();
+  const from = lz.clone().add(new V3(-170, 60, 150));
+  h.g.position.copy(from);
+  addMissionObj(h.g);
+  heli = { ...h, from, lz: lz.clone(), t: 0, state: 'inbound', landed: false };
+}
+function updateHeli(dt) {
+  if (!heli) return;
+  heli.t += dt;
+  heli.rotor.rotation.y += dt * 26; heli.tail.rotation.x += dt * 45;
+  const g = heli.g, top = _a.copy(heli.lz).setY(24);
+  if (heli.state === 'inbound') {
+    const k = Math.min(heli.t / 12, 1), e = 1 - Math.pow(1 - k, 2.2);
+    g.position.lerpVectors(heli.from, top, e);
+    g.rotation.order = 'YXZ'; g.rotation.y = Math.atan2(-(top.x - heli.from.x), -(top.z - heli.from.z)); g.rotation.x = -0.18 * (1 - k);
+    if (k >= 1) { heli.state = 'descend'; heli.t = 0; }
+  } else if (heli.state === 'descend') {
+    const k = Math.min(heli.t / 5, 1);
+    g.position.set(heli.lz.x, lerp(24, 1.75, ease(k)), heli.lz.z); g.rotation.x = 0;
+    if (k >= 1) { heli.state = 'landed'; heli.landed = true; showBanner('Extraction', 'Board the helicopter', '', 2.4); Sfx.radio(); }
+  } else if (heli.state === 'liftoff') {
+    g.position.y += dt * (3 + heli.t * 4); g.rotation.x = -0.1;
+    g.position.addScaledVector(_b.set(-Math.sin(g.rotation.y), 0, -Math.cos(g.rotation.y)), dt * heli.t * 6);
+  }
+  const alt = g.position.y;
+  if (alt < 16 && Math.random() < 0.9) {
+    for (let i = 0; i < 3; i++) {
+      const a = Math.random() * 6.28, s = rand(5, 11) * (1 - alt / 18);
+      fxSmoke.spawn(g.position.x + Math.cos(a) * 1.5, 0.3, g.position.z + Math.sin(a) * 1.5, Math.cos(a) * s, rand(0.2, 1), Math.sin(a) * s, 0.62, 0.52, 0.4, rand(1, 2), rand(1, 1.8), { drag: 1.6, grow: 1.4, alpha: 0.5 });
+    }
+  }
+  Sfx.heli(clamp(1 - g.position.distanceTo(camera.position) / 220, 0, 1));
+}
+
+// ---------------------------------------------------------------- missions
+const MISSIONS = [
+  {
+    id: 'survival', name: 'Ironveil', tag: 'Survival', env: 'dawn', time: '0552 · Dawn', color: '#f0a53a', mode: 'waves',
+    brief: 'Hold the Kessar crossroads against endless assault waves. Marksmen take the rooftops from wave two. Survive as long as you can.',
+  },
+  {
+    id: 'dustdevil', name: 'Dust Devil', tag: 'Sabotage', env: 'storm', time: '1310 · Sandstorm', color: '#c9a46a', level: 2,
+    brief: 'A sandstorm has grounded their air cover. Plant charges on three SAM launchers before it clears, then reach the extraction helicopter.',
+    start: [0, 40], startYaw: 0,
+    spawn: { max: 6, every: 4.5, heavy: 0.2 },
+    guards: [[-44, -30, 'rifleman'], [-40, -27, 'rifleman'], [46, -30, 'heavy'], [42, -33, 'rifleman'], [-38, 46, 'rifleman']],
+    objectives: [{ type: 'plant', at: [[-46, -34, 0], [46, -30, 1], [-40, 50, 1]] }, { type: 'extract', at: [44, 54] }],
+  },
+  {
+    id: 'blacksand', name: 'Black Sand', tag: 'Recon', env: 'night', time: '0210 · Night', color: '#7fd1c7', level: 2, stealth: true,
+    brief: 'Slip into the compound in the dark. Recover the courier\'s intel case from the warehouse yard, then get out. Guards carry flashlights. Night vision is on N and your flashlight on L.',
+    start: [-52, 52], startYaw: -2.4,
+    spawn: { max: 6, every: 3.5, heavy: 0.15 },
+    guards: [[8, -40, 'rifleman'], [14, -44, 'rifleman'], [-6, -38, 'rifleman'], [20, -30, 'heavy'], [0, -16, 'rifleman'], [-24, -10, 'rifleman'], [26, 10, 'rifleman'], [-20, 20, 'rifleman']],
+    objectives: [{ type: 'intel', at: [9, -44] }, { type: 'extract', at: [-48, 48] }],
+  },
+  {
+    id: 'kingpin', name: 'Kingpin', tag: 'Assassination', env: 'rain', time: '1645 · Thunderstorm', color: '#9aa8b4', level: 3,
+    brief: 'The warlord known as the Jackal is meeting his lieutenants in the east block. Kill him before he reaches his convoy at the north-east gate, then extract.',
+    start: [-50, -10], startYaw: -Math.PI / 2,
+    spawn: { max: 6, every: 4, heavy: 0.25 },
+    guards: [[18, 20, 'rifleman'], [-10, 30, 'rifleman'], [10, -20, 'rifleman']],
+    objectives: [{ type: 'hvt', at: [30, 37], escape: [55, 56] }, { type: 'extract', at: [-48, -48] }],
+  },
+  {
+    id: 'lastlight', name: 'Last Light', tag: 'Defend', env: 'sunset', time: '1902 · Sunset', color: '#e5703c', level: 4,
+    brief: 'Engineers are relaying satellite imagery through a field uplink by the monument. Keep it online for three minutes while the enemy throws everything at it.',
+    start: [4, 14], startYaw: 0, winText: 'Transfer complete',
+    spawn: { max: 9, every: 2.2, heavy: 0.3, marks: 2 },
+    objectives: [{ type: 'defend', at: [0, 9], duration: 180 }],
+  },
+];
+let MISSION = MISSIONS[0];
+const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const OBJ = {
+  plant: {
+    init(o) {
+      o.sites = o.at.map(([x, z, rot]) => { const p = freeSpot(x, z, 3.4); return { p, ent: buildSAM(p, rot), planted: false }; });
+      o.timer = -1; o.doneAt = 0;
+    },
+    label(o) { const n = o.sites.filter((s) => s.planted).length; return o.timer >= 0 ? 'Charges set. Clear the blast radius' : `Destroy the SAM launchers (${n}/${o.sites.length})`; },
+    sub(o) { return o.timer >= 0 ? `Detonation in ${Math.ceil(o.timer)}` : 'Hold E at a launcher to plant a charge'; },
+    point(o) { const s = o.sites.filter((t) => !t.planted).sort((a, b) => a.p.distanceTo(player.pos) - b.p.distanceTo(player.pos))[0]; return s ? _mkp.copy(s.p).setY(3.2) : null; },
+    interact(o) {
+      const s = o.sites.find((t) => !t.planted && t.p.distanceTo(player.pos) < 4.2);
+      if (!s) return null;
+      return { label: 'Plant charge', need: 2.6, done: () => {
+        s.planted = true; s.ent.charge.visible = true; Sfx.beep(); addPopup(100, 'CHARGE PLANTED'); G.score += 100;
+        if (o.sites.every((t) => t.planted)) { o.timer = 7; showBanner('All charges set', 'Clear the area', 'danger', 2.4); }
+      } };
+    },
+    update(o, dt) {
+      for (const s of o.sites) if (s.planted && o.timer >= 0) s.ent.chargeLed.visible = Math.sin(G.time * (o.timer < 3 ? 30 : 12)) > 0;
+      if (o.timer >= 0) {
+        const before = Math.ceil(o.timer); o.timer -= dt;
+        if (Math.ceil(o.timer) !== before && o.timer > 0) Sfx.beep();
+        if (o.timer <= 0) {
+          o.timer = -2; o.doneAt = G.time + 3;
+          o.sites.forEach((s, i) => after(i * 0.45, () => {
+            explode(s.p.clone().setY(1.2), { radius: 10, dmg: 600, playerDmg: 140, cause: 'frag' });
+            s.ent.g.traverse((m) => { if (m.isMesh) m.material = MAT.burnt; });
+            s.ent.L.rotation.x = 0.1; s.ent.charge.visible = false;
+            missionFires.push(s.p.clone().setY(1.6));
+          }));
+        }
+      }
+      return o.timer === -2 && G.time > o.doneAt ? 'done' : null;
+    },
+  },
+  intel: {
+    init(o) { o.p = freeSpot(o.at[0], o.at[1], 1.4); o.ent = buildIntel(o.p); },
+    label() { return 'Recover the intel case'; },
+    sub() { return G.alarm ? 'They know you are here' : 'Stay out of flashlight beams'; },
+    point(o) { return _mkp.copy(o.p).setY(1.6); },
+    interact(o) {
+      if (o.p.distanceTo(player.pos) > 2.6) return null;
+      return { label: 'Take intel', need: 2.2, done: () => { o.ent.kase.visible = false; o.taken = true; Sfx.pickup(); addPopup(500, 'INTEL SECURED'); G.score += 500; if (!G.alarm) raiseAlarm('The case was alarmed'); } };
+    },
+    update(o) { o.ent.led.visible = Math.sin(G.time * 5) > 0; return o.taken ? 'done' : null; },
+  },
+  hvt: {
+    init(o) {
+      const p = freeSpot(o.at[0], o.at[1], 1.2);
+      o.escape = new V3(o.escape[0], 0, o.escape[1]);
+      o.hvt = new Enemy('commander', p); o.hvt.post = p.clone(); o.hvt.flee = o.escape; o.hvt.alerted = false;
+      enemies.push(o.hvt);
+      for (const [dx, dz] of [[2.5, 1.5], [-2.5, 1.2], [0, -2.8]]) { const e = new Enemy('heavy', freeSpot(p.x + dx, p.z + dz, 0.8)); e.post = e.pos.clone(); e.alerted = false; enemies.push(e); }
+    },
+    label(o) { return o.hvt.alerted && !o.hvt.dead ? 'The Jackal is running for his convoy' : 'Eliminate the Jackal'; },
+    sub(o) { return o.hvt.alerted ? `Convoy ${Math.round(o.hvt.pos.distanceTo(o.escape))} m from him` : 'He is guarded by Juggernauts'; },
+    point(o) { return o.hvt.dead ? null : o.hvt.eyeInto(_mkp).setY(o.hvt.pos.y + 2.3); },
+    hvt: true,
+    update(o) {
+      if (o.hvt.dead) { addPopup(1000, 'HVT ELIMINATED'); G.score += 1000; return 'done'; }
+      if (o.hvt.pos.distanceTo(o.escape) < 3) return { fail: 'The Jackal reached his convoy' };
+      return null;
+    },
+  },
+  defend: {
+    init(o) {
+      const p = freeSpot(o.at[0], o.at[1], 1.2);
+      o.ent = buildUplink(p); o.left = o.duration; o.p = p;
+      G.uplink = { pos: p, hp: 100, hitT: -9 };
+    },
+    label() { return 'Defend the uplink'; },
+    sub(o) { return `Transfer ${Math.round((1 - o.left / o.duration) * 100)}% · ${fmtTime(o.left)} left`; },
+    point(o) { return _mkp.copy(o.p).setY(8.4); },
+    update(o, dt) {
+      o.left -= dt;
+      o.ent.beacon.visible = Math.sin(G.time * (G.time - G.uplink.hitT < 0.5 ? 25 : 4)) > 0;
+      if (G.uplink.hp <= 0) { explode(G.uplink.pos.clone().setY(1), { radius: 6, dmg: 200, playerDmg: 60 }); G.uplink = null; return { fail: 'The uplink was destroyed' }; }
+      if (o.left <= 0) { addPopup(1500, 'TRANSFER COMPLETE'); G.score += 1500; G.uplink = null; return 'done'; }
+      return null;
+    },
+  },
+  extract: {
+    init(o) {
+      o.p = freeSpot(o.at[0], o.at[1], 5); G.extracting = true;
+      showBanner('Extraction', 'Helicopter inbound', '', 2.4); Sfx.radio();
+      after(2, () => { if (G.obj === o) spawnHeli(o.p); });
+    },
+    label() { return heli && heli.landed ? 'Board the helicopter' : 'Get to the extraction point'; },
+    sub() { return heli ? (heli.landed ? 'Dust off when you are aboard' : 'Helicopter inbound') : 'Pop smoke at the LZ'; },
+    point(o) { return _mkp.copy(o.p).setY(2); },
+    update(o) {
+      if (Math.random() < 0.5) fxSmoke.spawn(o.p.x + rand(-0.3, 0.3), 0.3, o.p.z + rand(-0.3, 0.3), rand(-0.5, 0.5) + 0.6, rand(1.5, 2.6), rand(-0.5, 0.5), 0.2, 0.7, 0.3, rand(0.9, 1.5), rand(2.5, 3.5), { drag: 0.6, grow: 1.3, alpha: 0.7 });
+      if (heli && heli.landed && Math.hypot(player.pos.x - o.p.x, player.pos.z - o.p.z) < 7) { heli.state = 'liftoff'; heli.t = 0; return 'done'; }
+      return null;
+    },
+  },
+};
+const _mkp = new V3();
+function curObjective() { return G.obj; }
+function raiseAlarm(why) {
+  if (G.alarm) return;
+  G.alarm = true;
+  showBanner(why || 'Alarm raised', 'Reinforcements inbound', 'danger', 2.4);
+  Sfx.alarm();
+  for (const e of enemies) if (!e.dead) { e.alerted = true; e.lastKnown.copy(player.pos); }
+}
+function onEnemyAlert() { if (MISSION.stealth && !G.alarm) after(1.2, () => raiseAlarm()); }
+function nextObjective() {
+  G.objIdx++;
+  if (G.objIdx > 0) { addPopup(500, 'OBJECTIVE COMPLETE'); G.score += 500; }
+  if (G.objIdx >= MISSION.objectives.length) { missionComplete(); return; }
+  const o = G.obj = { ...MISSION.objectives[G.objIdx] };
+  OBJ[o.type].init(o);
+  if (G.objIdx > 0) { Sfx.radio(); showBanner('New objective', OBJ[o.type].label(o), '', 2.6); }
+}
+function setupMission() {
+  G.alarm = !MISSION.stealth; G.extracting = false; G.objIdx = -1; G.obj = null; G.result = null;
+  G.flashlight = false; setNVG(false);
+  const isWaves = MISSION.mode === 'waves';
+  $('objective').hidden = isWaves;
+  hud.el.querySelector('#tl .wave').hidden = !isWaves;
+  $('hostiles').hidden = !isWaves;
+  $('nvg-hint').hidden = !ENV.night;
+  $('tb-nvg').hidden = $('tb-light').hidden = !(IS_TOUCH && ENV.night);
+  if (isWaves) { showBanner('Kessar Compound · 0552', 'Hold the crossroads', '', 2.6); after(2.2, () => startWave(1)); return; }
+  G.wave = MISSION.level;
+  if (MISSION.start) { player.pos.set(MISSION.start[0], 0, MISSION.start[1]); player.yaw = MISSION.startYaw || 0; }
+  for (const [x, z, type] of MISSION.guards || []) { const e = new Enemy(type, freeSpot(x, z, 0.8)); e.post = e.pos.clone(); e.alerted = false; enemies.push(e); }
+  const marks = MISSION.spawn?.marks || 0;
+  for (let i = 0; i < marks; i++) { const spot = MARKSMAN_SPOTS.find((s) => !s.used); if (spot) { spot.used = true; enemies.push(new Enemy('marksman', spot.pos, spot)); } }
+  G.spawnT = MISSION.stealth ? 0 : 6;
+  nextObjective();
+  showBanner(MISSION.time, MISSION.name, '', 3);
+}
+function updateDirector(dt) {
+  const S = MISSION.spawn;
+  if (!S || (MISSION.stealth && !G.alarm)) return;
+  G.spawnT -= dt;
+  if (G.spawnT > 0) return;
+  const alive = enemies.filter((e) => !e.dead && !e.T.static).length;
+  if (alive < S.max + (G.extracting ? 3 : 0)) enemies.push(new Enemy(Math.random() < S.heavy ? 'heavy' : 'rifleman', pickSpawn()));
+  G.spawnT = S.every * (G.extracting ? 0.6 : 1) * rand(0.7, 1.3);
+}
+const use = { avail: null, t: 0 };
+function updateMission(dt) {
+  if (MISSION.mode === 'waves') { if (G.mode === 'play') updateWaves(dt); return; }
+  if (G.mode !== 'play') { updateHeli(dt); return; }
+  updateDirector(dt);
+  const o = G.obj;
+  if (o) {
+    const r = OBJ[o.type].update(o, dt);
+    if (r === 'done') nextObjective();
+    else if (r && r.fail) missionFailed(r.fail);
+  }
+  updateHeli(dt);
+  for (const p of missionFires) {
+    fxAdd.spawn(p.x + rand(-0.8, 0.8), p.y, p.z + rand(-1.2, 1.2), rand(-0.3, 0.3), rand(1.5, 3.2), rand(-0.3, 0.3), 1, rand(0.35, 0.6), 0.1, rand(0.6, 1), rand(0.4, 0.8), { drag: 1, grow: -0.6 });
+    if (Math.random() < dt * 8) fxSmoke.spawn(p.x, p.y + 1.5, p.z, rand(-0.3, 0.3) + 0.5, rand(1.8, 2.8), rand(-0.3, 0.3), 0.1, 0.09, 0.08, rand(1.4, 2), rand(5, 7), { drag: 0.3, grow: 1.2, alpha: 0.75 });
+  }
+  const cur = G.obj;
+  use.avail = cur && player.alive && OBJ[cur.type].interact ? OBJ[cur.type].interact(cur) : null;
+  const holding = input.keys.KeyE || touch.use;
+  if (use.avail && holding) {
+    use.t += dt;
+    if (use.t >= use.avail.need) { const a = use.avail; use.t = 0; use.avail = null; a.done(); }
+  } else use.t = 0;
+}
+function missionComplete() {
+  if (G.mode !== 'play') return;
+  G.mode = 'won'; G.result = 'won';
+  const t = G.time;
+  const bonus = 2000 + Math.max(0, Math.round((600 - t) * 4));
+  G.score += bonus;
+  G.missionTime = t;
+  const prog = store.get('missions', {});
+  const prev = prog[MISSION.id] || {};
+  prog[MISSION.id] = { done: true, best: Math.min(prev.best || Infinity, Math.round(t)), score: Math.max(prev.score || 0, G.score) };
+  store.set('missions', prog);
+  showBanner('Mission complete', MISSION.name, '', 3);
+  Sfx.victory();
+  setTimeout(showGameOver, 3200);
+}
+function missionFailed(reason) {
+  if (G.mode !== 'play') return;
+  G.mode = 'dead'; G.result = 'failed'; G.failReason = reason; G.timeScale = 0.5; G.missionTime = G.time;
+  canvas.classList.add('dying');
+  showBanner('Mission failed', reason, 'danger', 2.6);
+  setTimeout(showGameOver, 2800);
+}
+const _mk = new V3();
+function updateMissionHUD() {
+  const mk = $('objmarker'), o = G.obj;
+  if (MISSION.mode === 'waves' || !o) { mk.hidden = true; $('use').hidden = true; G.objPoint = null; $('tb-use').hidden = true; return; }
+  const def = OBJ[o.type];
+  setText($('obj-text'), 'objt', def.label(o));
+  setText($('obj-sub'), 'objs', def.sub ? def.sub(o) : '');
+  const up = $('uplink');
+  up.hidden = !G.uplink;
+  if (G.uplink) { up.firstChild.style.width = `${clamp(G.uplink.hp, 0, 100)}%`; up.classList.toggle('low', G.uplink.hp < 35); }
+  const p = def.point(o);
+  G.objPoint = p ? p.clone() : null;
+  if (!p || G.mode !== 'play') mk.hidden = true;
+  else {
+    mk.hidden = false;
+    _mk.copy(p).project(camera);
+    const W = innerWidth, H = innerHeight, m = 48;
+    let x = (_mk.x * 0.5 + 0.5) * W, y = (-_mk.y * 0.5 + 0.5) * H;
+    const behind = _mk.z > 1;
+    if (behind) { x = W - x; y = H - m; }
+    const edge = behind || x < m || x > W - m || y < m || y > H - m;
+    x = clamp(x, m, W - m); y = clamp(y, m, H - m);
+    mk.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px) translate(-50%, -50%)`;
+    mk.classList.toggle('edge', edge);
+    mk.classList.toggle('hvt', !!def.hvt);
+    setText(mk.querySelector('.lbl'), 'mkl', def.hvt ? 'HVT' : o.type === 'extract' ? 'LZ' : 'OBJ');
+    setText(mk.querySelector('.dst'), 'mkd', `${Math.round(Math.hypot(p.x - player.pos.x, p.z - player.pos.z))} m`);
+  }
+  const u = $('use');
+  u.hidden = !use.avail;
+  if (use.avail) {
+    setText(u.querySelector('.lbl'), 'usel', `${IS_TOUCH ? 'Hold USE' : 'Hold E'} · ${use.avail.label}`);
+    u.querySelector('.bar i').style.width = `${(use.t / use.avail.need) * 100}%`;
+  }
+  $('tb-use').hidden = !(IS_TOUCH && use.avail);
+}
+function renderMissions() {
+  const prog = store.get('missions', {}), best = store.get('best', { score: 0, wave: 0 });
+  const grid = $('mission-grid');
+  grid.textContent = '';
+  MISSIONS.forEach((M, i) => {
+    const card = document.createElement('article');
+    card.className = 'mcard'; card.style.setProperty('--sky', M.color);
+    const pr = prog[M.id];
+    const status = M.mode === 'waves'
+      ? (best.score ? `Best ${best.score.toLocaleString('en-US')} · ${best.wave} waves` : 'Not attempted')
+      : (pr && pr.done ? `Complete · best ${fmtTime(pr.best)}` : 'Not attempted');
+    card.innerHTML = `<div class="mnum"><span>OP ${String(i + 1).padStart(2, '0')} · <b>${M.tag.toUpperCase()}</b></span></div>
+      <h3>${M.name}</h3><div class="mtime">${M.time.toUpperCase()}</div><p>${M.brief}</p>
+      <div class="mfoot"><span class="mstat${pr && pr.done ? ' done' : ''}">${status}</span><button class="btn primary" type="button">Deploy</button></div>`;
+    card.querySelector('button').addEventListener('click', () => startMission(M.id));
+    grid.appendChild(card);
+  });
+}
+
 // ---------------------------------------------------------------- flow: menu, play, pause, game over
-const screens = { menu: $('menu'), pause: $('pause'), gameover: $('gameover'), settings: $('settings') };
+const screens = { menu: $('menu'), missions: $('missions'), pause: $('pause'), gameover: $('gameover'), settings: $('settings') };
 let pointerLocked = false;
 function lockPointer() {
   if (IS_TOUCH || !canvas.requestPointerLock) return;
@@ -2656,9 +3365,14 @@ function resetRun() {
   Object.assign(touch, { moveX: 0, moveY: 0, fire: false, ads: false, sprint: false });
   hud.feed.textContent = ''; hud.popups.textContent = ''; hud.dmg.textContent = '';
   canvas.classList.remove('dying');
+  clearMission();
+  G.flashlight = false; setNVG(false); use.avail = null; use.t = 0;
+  touch.use = false;
 }
+function startMission(id) { MISSION = MISSIONS.find((m) => m.id === id) || MISSIONS[0]; startGame(); }
 function startGame() {
   Sfx.init();
+  applyEnv(MISSION.env);
   resetRun();
   G.mode = 'play';
   for (const s of Object.values(screens)) s.hidden = true;
@@ -2666,10 +3380,10 @@ function startGame() {
   $('touch').hidden = !IS_TOUCH;
   sizeHudCanvases();
   refreshWeaponHUD(true); updateStreakHUD();
-  showBanner('Kessar Compound · 0552', 'Hold the crossroads', '', 2.6);
-  after(2.2, () => startWave(1));
+  setupMission();
   lockPointer();
 }
+function openMissions() { renderMissions(); screens.menu.hidden = true; screens.missions.hidden = false; }
 function pause() {
   if (G.mode !== 'play' || G.paused) return;
   G.paused = true;
@@ -2693,28 +3407,39 @@ function toMenu() {
   loadBest();
 }
 function showGameOver() {
-  if (G.mode !== 'dead') return;
+  if (G.mode !== 'dead' && G.mode !== 'won') return;
+  const waves = MISSION.mode === 'waves', won = G.result === 'won';
+  $('go-title').textContent = won ? 'Mission complete' : G.result === 'failed' ? 'Mission failed' : 'K.I.A.';
+  screens.gameover.classList.toggle('won', won);
+  $('st-waves-label').textContent = waves ? 'Waves held' : 'Time';
+  const idx = MISSIONS.indexOf(MISSION);
+  $('btn-next').hidden = !(won && idx < MISSIONS.length - 1);
+  $('btn-retry').classList.toggle('primary', !won || idx >= MISSIONS.length - 1);
   $('st-score').textContent = G.score.toLocaleString('en-US');
-  $('st-waves').textContent = String(G.wavesCleared);
+  $('st-waves').textContent = waves ? String(G.wavesCleared) : fmtTime(G.missionTime || G.time);
   $('st-kills').textContent = String(G.kills);
   $('st-hs').textContent = String(G.headshots);
   $('st-acc').textContent = G.shots ? `${Math.round((G.hits / G.shots) * 100)}%` : '—';
   $('st-streak').textContent = String(G.bestStreak);
   const best = store.get('best', { score: 0, wave: 0 });
-  $('go-sub').textContent = G.score > 0 && G.score >= best.score ? 'New best score' : `Fell on wave ${Math.max(1, G.wave)}`;
+  $('go-sub').textContent = !waves ? `${MISSION.name} · ${won ? (MISSION.winText || 'Extracted') : G.result === 'failed' ? G.failReason : 'Killed in action'}`
+    : G.score > 0 && G.score >= best.score ? 'New best score' : `Fell on wave ${Math.max(1, G.wave)}`;
   hud.el.hidden = true; $('touch').hidden = true;
   screens.gameover.hidden = false;
   if (pointerLocked) document.exitPointerLock();
 }
 function loadBest() {
-  const best = store.get('best', { score: 0, wave: 0 });
+  const best = store.get('best', { score: 0, wave: 0 }), prog = store.get('missions', {});
+  $('best-ops').textContent = `${MISSIONS.filter((m) => m.mode !== 'waves' && prog[m.id] && prog[m.id].done).length}/${MISSIONS.length - 1}`;
   $('best-score').textContent = best.score.toLocaleString('en-US');
   $('best-wave').textContent = String(best.wave);
 }
 loadBest();
 
-$('btn-deploy').addEventListener('click', startGame);
+$('btn-deploy').addEventListener('click', openMissions);
+$('btn-missions-back').addEventListener('click', () => { screens.missions.hidden = true; screens.menu.hidden = false; });
 $('btn-retry').addEventListener('click', startGame);
+$('btn-next').addEventListener('click', () => { const i = MISSIONS.indexOf(MISSION); startMission(MISSIONS[Math.min(i + 1, MISSIONS.length - 1)].id); });
 $('btn-menu').addEventListener('click', toMenu);
 $('btn-resume').addEventListener('click', resume);
 $('btn-quit').addEventListener('click', toMenu);
@@ -2757,6 +3482,8 @@ addEventListener('keydown', (e) => {
     case 'KeyG': throwGrenade(); break;
     case 'KeyV': case 'KeyF': melee(); break;
     case 'KeyB': callAirstrike(); break;
+    case 'KeyN': if (ENV.night) setNVG(!G.nvg); break;
+    case 'KeyL': toggleFlashlight(); break;
     case 'KeyC': crouchPress(); break;
     case 'Space': input.jump = true; break;
   }
@@ -2830,6 +3557,9 @@ addEventListener('wheel', (e) => {
   btn('tb-swap', () => switchWeapon((ws.cur + 1) % WEAPONS.length));
   btn('tb-strike', () => callAirstrike());
   btn('tb-pause', () => pause());
+  btn('tb-use', (el) => { touch.use = true; el.classList.add('on'); }, (el) => { touch.use = false; el.classList.remove('on'); });
+  btn('tb-nvg', () => setNVG(!G.nvg));
+  btn('tb-light', () => toggleFlashlight());
 })();
 
 // ---------------------------------------------------------------- resize, quality, main loop
@@ -2845,7 +3575,9 @@ const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const fsMat = (uniforms, frag) => new THREE.ShaderMaterial({ uniforms, vertexShader: FS_VERT, fragmentShader: frag, depthTest: false, depthWrite: false });
 const mkRT = (samples = 0, depth = false) => new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples, depthBuffer: depth });
 const post = {
-  scene: mkRT(renderer.capabilities.isWebGL2 ? 4 : 0, true), half: mkRT(), qA: mkRT(), qB: mkRT(), eA: mkRT(), eB: mkRT(), rays: mkRT(),
+  scene: mkRT(renderer.capabilities.isWebGL2 ? 4 : 0, true), half: mkRT(), qA: mkRT(), qB: mkRT(), eA: mkRT(), eB: mkRT(), rays: mkRT(), fA: mkRT(), fB: mkRT(),
+  copy: fsMat({ tDiffuse: { value: null }, uTexel: { value: new THREE.Vector2() } }, `uniform sampler2D tDiffuse; uniform vec2 uTexel; varying vec2 vUv;
+    void main(){ gl_FragColor = vec4((texture2D(tDiffuse, vUv + uTexel * vec2(-0.5, -0.5)).rgb + texture2D(tDiffuse, vUv + uTexel * vec2(0.5, -0.5)).rgb + texture2D(tDiffuse, vUv + uTexel * vec2(-0.5, 0.5)).rgb + texture2D(tDiffuse, vUv + uTexel * vec2(0.5, 0.5)).rgb) * 0.25, 1.0); }`),
   bright: fsMat({ tDiffuse: { value: null }, uTexel: { value: new THREE.Vector2() } }, `uniform sampler2D tDiffuse; uniform vec2 uTexel; varying vec2 vUv;
     void main(){
       vec3 c = (texture2D(tDiffuse, vUv + uTexel * vec2(-0.5, -0.5)).rgb + texture2D(tDiffuse, vUv + uTexel * vec2(0.5, -0.5)).rgb + texture2D(tDiffuse, vUv + uTexel * vec2(-0.5, 0.5)).rgb + texture2D(tDiffuse, vUv + uTexel * vec2(0.5, 0.5)).rgb) * 0.25;
@@ -2872,9 +3604,10 @@ const post = {
       gl_FragColor = vec4(acc * (uStrength / 56.0), 1.0);
     }`),
   final: fsMat({
-    tScene: { value: null }, tB1: { value: null }, tB2: { value: null }, tRays: { value: null },
+    tScene: { value: null }, tB1: { value: null }, tB2: { value: null }, tRays: { value: null }, tFocus: { value: null },
+    uExposure: { value: 1 }, uNVG: { value: 0 }, uFocus: { value: 0 }, uFlare: { value: 0 }, uRainLens: { value: 0 },
     uTime: { value: 0 }, uDesat: { value: 0 }, uCA: { value: 0.004 }, uGrain: { value: 0.012 }, uRes: { value: new THREE.Vector2(1, 1) }, uBloom: { value: 0.55 },
-  }, `uniform sampler2D tScene, tB1, tB2, tRays; uniform float uTime, uDesat, uCA, uGrain, uBloom; uniform vec2 uRes; varying vec2 vUv;
+  }, `uniform sampler2D tScene, tB1, tB2, tRays, tFocus; uniform float uTime, uDesat, uCA, uGrain, uBloom, uExposure, uNVG, uFocus, uFlare, uRainLens; uniform vec2 uRes; varying vec2 vUv;
     vec3 ivRrtOdt(vec3 v){ vec3 a = v * (v + 0.0245786) - 0.000090537; vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081; return a / b; }
     vec3 ivAces(vec3 c){
       const mat3 I = mat3(vec3(0.59719, 0.07600, 0.02840), vec3(0.35458, 0.90834, 0.13383), vec3(0.04823, 0.01566, 0.83777));
@@ -2883,12 +3616,39 @@ const post = {
     }
     vec3 ivToSRGB(vec3 c){ return mix(pow(c, vec3(1.0 / 2.4)) * 1.055 - 0.055, c * 12.92, vec3(lessThanEqual(c, vec3(0.0031308)))); }
     void main(){
-      vec2 cd = vUv - 0.5; float r2 = dot(cd, cd);
+      vec2 uv = vUv;
+      if (uRainLens > 0.0) {
+        vec2 g = vUv * vec2(26.0, 15.0); vec2 id = floor(g); vec2 f = fract(g) - 0.5;
+        float r = fract(sin(dot(id, vec2(12.9898, 78.233))) * 43758.5453);
+        float life = fract(uTime * (0.12 + r * 0.25) + r * 7.0);
+        vec2 c = vec2(r - 0.5, fract(r * 7.13) - 0.5) * 0.5 + vec2(0.0, life * 0.25);
+        float drop = smoothstep(0.2, 0.0, length((f - c) * vec2(1.0, 0.8))) * step(0.6, r) * (1.0 - life);
+        uv += (f - c) * drop * 0.05 * uRainLens;
+      }
+      vec2 cd = uv - 0.5; float r2 = dot(cd, cd);
       vec2 off = cd * r2 * uCA;
-      vec3 col = vec3(texture2D(tScene, vUv - off).r, texture2D(tScene, vUv).g, texture2D(tScene, vUv + off).b);
-      vec3 bloom = texture2D(tB1, vUv).rgb * 0.55 + texture2D(tB2, vUv).rgb * 0.9;
-      col += bloom * uBloom + texture2D(tRays, vUv).rgb * vec3(1.0, 0.86, 0.66);
+      vec3 col = vec3(texture2D(tScene, uv - off).r, texture2D(tScene, uv).g, texture2D(tScene, uv + off).b);
+      if (uFocus > 0.0) col = mix(col, texture2D(tFocus, uv).rgb, smoothstep(0.14, 0.5, length(cd * vec2(uRes.x / uRes.y, 1.0))) * uFocus);
+      vec3 bloom = texture2D(tB1, uv).rgb * 0.55 + texture2D(tB2, uv).rgb * 0.9;
+      col += bloom * uBloom + texture2D(tRays, uv).rgb * vec3(1.0, 0.86, 0.66);
+      if (uFlare > 0.0) {
+        vec2 gv = vec2(0.5) - uv; vec3 gh = vec3(0.0);
+        for (int i = 1; i < 5; i++) { vec2 sp = uv + gv * (float(i) * 0.42); float w = pow(max(1.0 - length(vec2(0.5) - sp) / 0.71, 0.0), 5.0); gh += texture2D(tB2, sp).rgb * w * (i == 2 ? vec3(0.6, 0.8, 1.0) : vec3(1.0, 0.8, 0.6)); }
+        vec2 hv = normalize(gv + 1e-5) * 0.38; float hw = pow(max(1.0 - abs(length(gv) - 0.38) * 12.0, 0.0), 2.0);
+        gh += texture2D(tB2, uv + hv).rgb * hw * 0.6;
+        col += gh * uFlare * 0.3;
+      }
+      col *= uExposure * (uNVG > 0.5 ? 4.0 : 1.0);
       col = ivAces(col);
+      if (uNVG > 0.5) {
+        float l = pow(dot(col, vec3(0.2126, 0.7152, 0.0722)), 0.8);
+        float nz = fract(sin(dot(vUv * uRes + fract(uTime * 13.7) * 71.3, vec2(12.9898, 78.233))) * 43758.5453);
+        col = vec3(0.16, 1.0, 0.3) * (l * 1.15 + (nz - 0.5) * 0.12);
+        col *= 0.92 + 0.08 * sin(vUv.y * uRes.y * 1.4);
+        col *= smoothstep(0.62, 0.48, length(cd * vec2(uRes.x / uRes.y, 1.0)));
+        gl_FragColor = vec4(ivToSRGB(clamp(col, 0.0, 1.0)), 1.0);
+        return;
+      }
       float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
       col = mix(vec3(l), col, 1.1 - uDesat);
       col *= mix(vec3(0.92, 0.99, 1.07), vec3(1.07, 1.0, 0.9), smoothstep(0.05, 0.75, l));
@@ -2943,7 +3703,7 @@ const post = {
     this.scene.setSize(w, h);
     this.depth.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1)); this.aoA.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1)); this.aoB.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
     const hw = Math.max(1, w >> 1), hh = Math.max(1, h >> 1), qw = Math.max(1, w >> 2), qh = Math.max(1, h >> 2), ew = Math.max(1, w >> 3), eh = Math.max(1, h >> 3);
-    this.half.setSize(hw, hh); this.qA.setSize(qw, qh); this.qB.setSize(qw, qh); this.eA.setSize(ew, eh); this.eB.setSize(ew, eh); this.rays.setSize(qw, qh);
+    this.half.setSize(hw, hh); this.fA.setSize(hw, hh); this.fB.setSize(hw, hh); this.qA.setSize(qw, qh); this.qB.setSize(qw, qh); this.eA.setSize(ew, eh); this.eB.setSize(ew, eh); this.rays.setSize(qw, qh);
     this.final.uniforms.uRes.value.set(w, h);
   },
 };
@@ -2966,7 +3726,7 @@ function renderPost(withVM) {
   const facing = _fwd.dot(SUN_DIR);
   const sh = post.shafts.uniforms;
   _sunNdc.copy(camera.position).addScaledVector(SUN_DIR, 300).project(camera);
-  sh.uStrength.value = smoothstep(0.1, 0.75, facing) * 0.8;
+  sh.uStrength.value = smoothstep(0.1, 0.75, facing) * 0.8 * (1 - (skyUniforms.uOvercast.value + skyUniforms.uDust.value) * 0.85) * (ENV.night ? 0.25 : 1);
   sh.uSun.value.set(_sunNdc.x * 0.5 + 0.5, _sunNdc.y * 0.5 + 0.5); sh.uAspect.value = W / H;
   sh.tDiffuse.value = post.half.texture;
   runPass(post.shafts, post.rays);
@@ -2974,6 +3734,19 @@ function renderPost(withVM) {
   f.tScene.value = post.scene.texture; f.tB1.value = post.qB.texture; f.tB2.value = post.eB.texture; f.tRays.value = post.rays.texture;
   f.uTime.value = performance.now() / 1000;
   f.uDesat.value = G.mode === 'menu' ? 0 : player.alive ? clamp((45 - player.hp) / 45, 0, 1) * 0.55 : 0.75;
+  f.uExposure.value = ENV.exposure || 1;
+  f.uNVG.value = G.nvg && G.mode !== 'menu' ? 1 : 0;
+  f.uFlare.value = ENV.night || ENV.sky.overcast || ENV.sky.dust ? 0 : smoothstep(0.55, 0.95, facing);
+  f.uRainLens.value = ENV.weather === 'rain' && G.mode !== 'menu' ? clamp(0.4 + camera.rotation.x * 1.5, 0, 1) : 0;
+  const focus = G.mode === 'menu' ? 0 : ease(vm.adsT) * (WEAPONS[ws.cur].scope ? 0 : 0.85);
+  f.uFocus.value = focus;
+  if (focus > 0.01) {
+    post.copy.uniforms.tDiffuse.value = post.scene.texture; post.copy.uniforms.uTexel.value.set(1 / W, 1 / H);
+    runPass(post.copy, post.fA);
+    b.tDiffuse.value = post.fA.texture; b.uDir.value.set(3 / W, 0); runPass(post.blur, post.fB);
+    b.tDiffuse.value = post.fB.texture; b.uDir.value.set(0, 3 / H); runPass(post.blur, post.fA);
+    f.tFocus.value = post.fA.texture;
+  }
   runPass(post.final, null);
 }
 // Screen-space ambient occlusion (Ultra): a half-resolution depth pass, a scalable-AO estimate, a depth-aware blur,
@@ -3062,7 +3835,7 @@ function update(dt, rdt) {
   updateAir(dt);
   updatePickups(dt);
   updateFlying(dt);
-  if (G.mode === 'play') updateWaves(dt);
+  updateMission(dt);
   updateFX(dt, rdt);
   updateViewmodel(dt);
   updateHUD(dt);
@@ -3089,18 +3862,21 @@ function adaptQuality(rdt) {
 }
 function frame(now) {
   requestAnimationFrame(frame);
-  const rdt = Math.min((now - last) / 1000, 0.05);
+  // rAF timestamps can predate the end of a long synchronous load, so never step time backwards.
+  const rdt = clamp((now - last) / 1000, 0, 0.05);
   last = now; frameN++;
   adaptQuality(rdt);
   if (G.mode === 'menu') { menuCamera(rdt); G.time += rdt; updateFX(rdt, rdt); }
   else if (!G.paused) { const dt = rdt * G.timeScale; G.time += dt; update(dt, rdt); }
   skyMesh.position.copy(camera.position);
-  grassUniforms.uTime.value = performance.now() / 1000;
+  updateWeather(rdt);
+  grassUniforms.uTime.value = performance.now() / 1000 * (ENV.weather === 'sand' ? 2.6 : ENV.weather === 'rain' ? 1.6 : 1);
   updateShadowFocus();
   const withVM = G.mode !== 'menu' && vm.root.visible;
   if (HIGH()) renderPost(withVM);
   else {
     renderer.setRenderTarget(null);
+    renderer.toneMappingExposure = ENV.exposure || 1;
     renderer.clear();
     renderer.render(scene, camera);
     if (withVM) { renderer.clearDepth(); renderer.render(vmScene, vmCamera); }
@@ -3109,4 +3885,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__ironveil = { step: (n = 1, dt = 1 / 30) => { for (let i = 0; i < n; i++) { G.time += dt; update(dt, dt); } }, input, camera, WEAPONS, G, player, enemies, ws, startGame, pause, resume, toMenu, callAirstrike, throwGrenade, switchWeapon, activateUAV, explode };
+window.__ironveil = { startMission, MISSIONS, getObj: () => G.obj, use, setNVG, applyEnv, step: (n = 1, dt = 1 / 30) => { for (let i = 0; i < n; i++) { G.time += dt; update(dt, dt); } }, input, camera, WEAPONS, G, player, enemies, ws, startGame, pause, resume, toMenu, callAirstrike, throwGrenade, switchWeapon, activateUAV, explode };

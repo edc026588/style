@@ -30,9 +30,22 @@ Desktop browsers with a keyboard and mouse give the best experience. Phones and 
 | `G` | Throw frag grenade |
 | `V` or `F` | Melee |
 | `B` | Call in an airstrike on your aim point |
+| `E` (hold) | Plant charges, take intel |
+| `N` / `L` | Night vision / flashlight (night operations) |
 | `Esc` / `P` | Pause |
 
-## What's in it
+## Campaign
+
+Five operations on the Kessar Compound, each with its own time of day, weather and objectives. The operation select screen tracks which you have completed and your best times.
+
+| # | Operation | Conditions | Objectives |
+| --- | --- | --- | --- |
+| 1 | Ironveil | Dawn | Survive endless assault waves |
+| 2 | Dust Devil | Noon sandstorm, short visibility | Plant charges on three SAM launchers, then reach the extraction helicopter |
+| 3 | Black Sand | Night | Recover an intel case past guards with flashlights, then extract. Guards notice you less at night, and less still while you crouch. Taking the case or getting spotted raises the alarm. |
+| 4 | Kingpin | Thunderstorm | Kill the Jackal before he escapes to his convoy, then extract. He is guarded by Juggernauts and flees once alerted. |
+| 5 | Last Light | Sunset | Keep a field uplink alive for three minutes while enemies attack it |
+
 
 - **Four weapons, each with its own handling.** AR-7 carbine (red dot), VK-9 suppressed SMG (holographic sight), Brecher-12 pump shotgun (iron sights) and Longbow .338 bolt-action sniper (full scope overlay). Each has its own recoil, spread bloom, damage falloff, ADS zoom, reload animation and synthesized sound. The viewmodels include hands, shell ejection, weapon bob, sway, sprint pose, pump and bolt cycling, and magazine swaps.
 - **Movement:** sprint, crouch, jump, and a slide from a sprint. Head bob and footsteps follow your speed.
@@ -49,6 +62,8 @@ Desktop browsers with a keyboard and mouse give the best experience. Phones and 
   - **Shadows and occlusion:** Ultra adds screen-space ambient occlusion and 4096 sun shadows. Every quality level has soft contact shadows under objects.
   - **Impacts:** bullet hits depend on the surface: sparks off metal, splinters off wood, puffs of sand, and grit and dust off stone.
   - **Scene detail:** swaying grass, natural rocks, balconies, power cables, burning wrecks with billowing smoke, and drifting dust.
+  - **Time of day and weather:** each operation sets the sun, sky, fog and lighting, then re-captures the lighting environment. Rain falls as streaks with ground splashes, wet reflective surfaces, lightning and thunder, and drops on the lens. Sandstorms bring dense haze, rolling dust and wind-blown grit. Nights have stars, a moon, a flashlight, night vision and fake volumetric flashlight beams on enemy rifles.
+  - **Camera effects:** a sun lens flare, and the edges of the view blur while you aim down sights.
   - **Quality levels:** there are three, `Ultra`, `High` and `Low`. If the first seconds of a deployment run slowly, the game steps down a level automatically.
 
 ## Files
