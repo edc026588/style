@@ -2040,7 +2040,8 @@ function setLoop(name, v, t = 0.3) { const L = AU.loops[name]; if (!L || !AU.ctx
 function sfxAt(kind, x, y, z, size = 1) {
   if (!AU.ctx || AU.muted) return;
   const d = Math.hypot(x - camera.position.x, y - camera.position.y, z - camera.position.z);
-  const vol = clamp(1 / (1 + d / 700), 0, 1);
+  // Rocket motors are loud: launches carry much further than splashes and small guns
+  const vol = clamp(1 / (1 + d / (kind === 'launch' ? 2200 : 700)), 0, 1);
   if (vol < 0.02) return;
   const delay = Math.min(d / 343, 4);
   sfx(kind, vol, delay, size, d);
@@ -2072,8 +2073,22 @@ function sfx(kind, vol = 1, delay = 0, size = 1, dist = 0) {
   } else if (kind === 'splash') {
     f.type = 'bandpass'; f.frequency.value = 900 * far; f.Q.value = 0.5; g.gain.setValueAtTime(0.7 * vol * size, now); dur = 1.6;
   } else if (kind === 'launch') {
-    f.type = 'bandpass'; f.Q.value = 0.7; f.frequency.setValueAtTime(400, now); f.frequency.exponentialRampToValueAtTime(1500, now + 2.4);
-    g.gain.setValueAtTime(0.001, now); g.gain.exponentialRampToValueAtTime(1.3 * vol, now + 0.15); dur = 3.0;
+    // Ignition: a hard thump and a crack, then the motor's roar receding as the missile climbs away
+    thump(95, 28, 1.8 * vol, 0.7);
+    f.type = 'lowpass'; f.Q.value = 0.9;
+    f.frequency.setValueAtTime(3200 * far, now); f.frequency.exponentialRampToValueAtTime(600, now + 3.2);
+    g.gain.setValueAtTime(0.001, now); g.gain.exponentialRampToValueAtTime(2.4 * vol, now + 0.05);
+    g.gain.exponentialRampToValueAtTime(1.1 * vol, now + 0.9); dur = 3.6;
+    // Crackle of the motor exhaust
+    const cr = C.createBufferSource(); cr.buffer = AU.noise;
+    const cf = C.createBiquadFilter(), cg = C.createGain(); cf.type = 'highpass'; cf.frequency.value = 2400;
+    cg.gain.setValueAtTime(0.001, now); cg.gain.exponentialRampToValueAtTime(0.9 * vol * far, now + 0.04); cg.gain.exponentialRampToValueAtTime(0.0001, now + 1.6);
+    cr.connect(cf); cf.connect(cg); cg.connect(AU.master); cr.start(now, Math.random() * 0.5); cr.stop(now + 1.7);
+    // Low rumble that carries a long way
+    const rb = C.createBufferSource(); rb.buffer = AU.brown;
+    const rf = C.createBiquadFilter(), rg = C.createGain(); rf.type = 'lowpass'; rf.frequency.value = 160;
+    rg.gain.setValueAtTime(0.001, now); rg.gain.exponentialRampToValueAtTime(1.6 * vol, now + 0.08); rg.gain.exponentialRampToValueAtTime(0.0001, now + 2.8);
+    rb.connect(rf); rf.connect(rg); rg.connect(AU.master); rb.start(now, Math.random() * 0.5); rb.stop(now + 2.9);
   } else if (kind === 'whistle') {
     const o = C.createOscillator(), og = C.createGain(); o.type = 'sine';
     o.frequency.setValueAtTime(1500, now); o.frequency.exponentialRampToValueAtTime(380, now + 1.1);
