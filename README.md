@@ -86,4 +86,19 @@ A second game lives in [`battleship/`](battleship/index.html): classic Battleshi
 
 ## Strait Fire
 
-A real-time naval action game in [`strait-action/`](strait-action/index.html), set on the same Taiwan Strait. You captain ROCS Kee Lung for the Allied Coalition or the Type 055 Nanchang for the PLA Navy, and fight off endless waves of frigates, destroyers, submarines, carrier groups and strike jets with your gun, homing anti-ship missiles and a side-specific special (Harpoon salvo or DF-21D strike). Allied AI ships fight alongside you, and the Penghu, Kinmen and Matsu islands block both ships and shells. Keyboard and mouse on desktop; a virtual stick and buttons on touch screens. Single HTML file, sound synthesized in the browser.
+A first-person naval combat game in [`strait-action/`](strait-action/index.html), set in the Taiwan Strait. You fight from the bridge wing of ROCS Kee Lung (Allied Coalition: Taiwan, the US and Japan) or the Type 055 destroyer Nanchang (PLA Navy) through a six-mission campaign:
+
+| # | Mission | Setting |
+| --- | --- | --- |
+| 1 | Median Line | Dawn surface action against two frigates; teaches the controls |
+| 2 | Convoy | Escort three merchant ships into harbour past missile boats, a surface group and jets |
+| 3 | Silent Hunter | Find and kill two submarines in rain and rough seas |
+| 4 | Vampire Raid | Defend a fleet supply ship against waves of strike aircraft and missile salvos |
+| 5 | Night action | Hunt a missile-boat swarm among the islands using star shells |
+| 6 | Carrier Strike | Break through a carrier group's escorts in a thunderstorm and sink the carrier |
+
+It's rendered with [three.js](https://threejs.org): a physical sky with procedural clouds, a reflective ocean with swell that every ship rides, PBR ship models, islands and the distant mountains of Taiwan and Fujian, plus bloom, smoke, fire and spray. Gunnery uses a ballistic fire-control solution; missiles, close-in weapons, chaff, submarines and torpedoes are all simulated, and enemy salvos walk onto you unless you manoeuvre. Every model, texture and sound is generated in code.
+
+Controls: mouse to look and aim, hold left click to fire the gun, hold right click for binoculars, `W`/`S` engine telegraph, `A`/`D` rudder, `E` missile at the locked target, `Q` special weapon (Harpoon salvo or DF-21D strike), `C` chaff and decoys, `F` star shell, `R` radar range, `Esc`/`P` pause. Touch screens get an on-screen stick and buttons. Serve the folder over HTTP like the main game.
+
+The original top-down version is still there as [`strait-action/arcade.html`](strait-action/arcade.html).

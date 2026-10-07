@@ -217,6 +217,8 @@ const stars = (() => {
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   const m = new THREE.PointsMaterial({ color: 0xdfe8ff, size: 1.6, sizeAttenuation: false, transparent: true, opacity: 0, depthWrite: false, depthTest: false, fog: false });
   const p = new THREE.Points(g, m); p.renderOrder = -9; p.frustumCulled = false; scene.add(p);
+  // Layer 1 is seen by the main camera only, so stars stay out of the sea's reflection.
+  p.layers.set(1); camera.layers.enable(1);
   return p;
 })();
 const moon = (() => {
@@ -1028,6 +1030,7 @@ function buildWarship(key, { player = false, hullNo = '' } = {}) {
   }
   for (const f of S.funnels || []) addFunnel(B, f, P.deckAt(f.x), mats);
   for (const m of S.masts || []) addMast(B, m, P.deckAt(m.x), mats, spinners);
+  addShipDetail(B, S, P, mats);
   for (const v of S.vls || []) addVLS(B, v.x, P.deckAt(v.x), v.l, v.w);
   for (const c of S.ciws || []) addCIWS(B, c.x, P.deckAt(c.x) + c.y, c.z, c.type, mats);
   for (const c of S.canisters || []) addCanisters(B, c.x, P.deckAt(c.x) + c.y, mats);
@@ -1062,6 +1065,54 @@ function buildWarship(key, { player = false, hullNo = '' } = {}) {
   return { group, spinners, turrets, P, eye, top, L: S.L, B: S.B };
 }
 function s0(b) { return b * 0.3; }
+
+// Small fittings that sell the scale: windows, doors, life rafts, antennas, anchors, scuttles.
+function addShipDetail(B, S, P, mats) {
+  const stealth = S.taper > 0.1;
+  const win = new THREE.PlaneGeometry(0.9, 0.7), door = new THREE.PlaneGeometry(0.9, 1.9);
+  for (const b of S.blocks) {
+    const y = P.deckAt(b.x) + (b.y || 0);
+    const halfW = b.w / 2 + 0.03, tz = b.taper ?? S.taper;
+    for (const side of [-1, 1]) {
+      // Doors at deck level, two per side on each block
+      for (const f of [-0.3, 0.25]) B.add(door, MAT.dark, b.x + b.l * f, y + 1.0, side * halfW, 0, side > 0 ? 0 : Math.PI, 0);
+      if (!stealth) {
+        const n = Math.floor(b.l / 3.2);
+        for (let i = 0; i < n; i++) if ((i * 7 + Math.round(b.x)) % 5 !== 0) B.add(win, MAT.glass, b.x - b.l / 2 + 1.6 + i * 3.2, y + b.h - 1.3, side * halfW, 0, side > 0 ? 0 : Math.PI, 0);
+      } else {
+        const zz = side * (halfW - tz * b.h * 0.5);
+        B.add(new THREE.PlaneGeometry(b.l * 0.5, 0.06), MAT.dark, b.x, y + b.h * 0.5, zz, side * tz * 0.9, side > 0 ? 0 : Math.PI, 0);
+      }
+    }
+    // Rooftop vents and lockers
+    for (let i = 0; i < 3; i++) B.add(new THREE.BoxGeometry(1.4, 0.6, 1.1), mats.sup, b.x - b.l * 0.3 + i * b.l * 0.25, y + b.h, (i % 2 ? 1 : -1) * b.w * 0.22);
+  }
+  // Life-raft canisters along the deck edges amidships
+  const raft = cyl(0.42, 0.42, 1.5, 10); raft.rotateZ(Math.PI / 2);
+  for (let i = 0; i < 6; i++) for (const side of [-1, 1]) {
+    const x = -S.L * 0.12 + i * 2.2, t = P.tAt(x);
+    B.add(raft, MAT.white, x, P.fb(t) + 0.55, side * (P.dk(t) - 0.8));
+  }
+  // Whip antennas on the deck edge
+  for (const x of [-S.L * 0.05, S.L * 0.08]) for (const side of [-1, 1]) {
+    const t = P.tAt(x);
+    B.add(cyl(0.03, 0.06, 9, 4), MAT.metal, x, P.fb(t) + 4.5, side * (P.dk(t) - 0.4), side * 0.12, 0, 0);
+  }
+  // Anchors and hawse pipes near the bow
+  for (const side of [-1, 1]) {
+    const x = S.L * 0.4, t = P.tAt(x), z = lerp(P.wl(t), P.dk(t), 0.75);
+    B.add(new THREE.BoxGeometry(1.6, 1.3, 0.35), MAT.black, x, P.fb(t) * 0.75, side * (z + 0.05));
+    B.add(cyl(0.45, 0.45, 0.3, 10), MAT.black, x + 1.5, P.fb(t) - 0.25, side * (P.dk(t) - 1.2));
+  }
+  // Scuttles along the forward hull on older designs
+  if (!stealth) {
+    const sc = new THREE.CircleGeometry(0.22, 10);
+    for (let i = 0; i < 18; i++) for (const side of [-1, 1]) {
+      const x = -S.L * 0.05 + i * 2.6, t = P.tAt(x), z = lerp(P.wl(t), P.dk(t), 0.72) + 0.04;
+      B.add(sc, MAT.glass, x, P.fb(t) * 0.68, side * z, 0, side > 0 ? 0 : Math.PI, 0);
+    }
+  }
+}
 
 function buildFAC(key, hullNo) {
   const group = new THREE.Group(), B = new Builder(), spinners = [], turrets = [];
@@ -1668,7 +1719,7 @@ function sfx(kind, vol = 1, delay = 0, size = 1, dist = 0) {
 const CLASS = {
   kidd:      { model: 'war', label: 'Kidd-class destroyer', hp: 760, speed: 15.5, turn: 0.065, gun: { every: 3.4, dmg: 40, range: 14000 }, asm: 6, sam: true, ciws: 0.85, pref: 7000 },
   burke:     { model: 'war', label: 'Arleigh Burke-class destroyer', hp: 780, speed: 15.8, turn: 0.07, gun: { every: 3.2, dmg: 40, range: 14000 }, asm: 8, sam: true, ciws: 0.9, pref: 7500 },
-  mogami:    { model: 'war', label: 'Mogami-class frigate', hp: 540, speed: 15.0, turn: 0.075, gun: { every: 3.0, dmg: 36, range: 13000 }, asm: 6, sam: false, ciws: 0.8, pref: 6000 },
+  mogami:    { model: 'war', label: 'Mogami-class frigate', hp: 540, speed: 15.0, turn: 0.075, gun: { every: 3.0, dmg: 30, range: 13000 }, asm: 6, sam: false, ciws: 0.8, pref: 6000 },
   chengkung: { model: 'war', label: 'Cheng Kung-class frigate', hp: 520, speed: 14.5, turn: 0.075, gun: { every: 1.9, dmg: 20, range: 9000 }, asm: 4, sam: true, ciws: 0.8, pref: 5500 },
   kh6:       { model: 'fac', label: 'Kuang Hua VI missile boat', hp: 150, speed: 17, turn: 0.13, gun: { every: 1.3, dmg: 8, range: 4500 }, asm: 2, ciws: 0, pref: 3500, small: true },
   haikun:    { model: 'sub', label: 'Hai Kun-class submarine', hp: 320, speed: 5, turn: 0.04, torp: true, pref: 3500 },
@@ -1710,8 +1761,8 @@ const PLAYER_SHIP = { ALLIED: { cls: 'kidd', name: 'ROCS Kee Lung', no: '1801', 
 const JET_KIND = { ALLIED: ['f16', 'f35', 'f18'], PLA: ['flanker', 'j20', 'flanker'] };
 const JET_NAME = { f16: 'F-16V', f35: 'F-35B', f18: 'F/A-18F', flanker: 'J-15', j20: 'J-20' };
 const DIFF = {
-  recruit: { fire: 1.5, disp0: 400, dispMin: 50, asmEvery: 80, dmg: 0.55, ciwsVs: 0.4, samPk: 0.2, torpEvery: 80, jetMul: 1.4 },
-  veteran: { fire: 1.0, disp0: 290, dispMin: 24, asmEvery: 52, dmg: 1.0, ciwsVs: 0.6, samPk: 0.34, torpEvery: 52, jetMul: 1.0 },
+  recruit: { fire: 1.5, disp0: 420, dispMin: 75, asmEvery: 80, dmg: 0.55, ciwsVs: 0.4, samPk: 0.2, torpEvery: 80, jetMul: 1.4 },
+  veteran: { fire: 1.0, disp0: 300, dispMin: 40, asmEvery: 52, dmg: 1.0, ciwsVs: 0.6, samPk: 0.34, torpEvery: 52, jetMul: 1.0 },
 };
 const nameIx = {};
 function nextName(cls, side) {
@@ -2896,7 +2947,7 @@ function aiShip(s, dt) {
         const s2 = solveBallistic(muz, aim, SHELL_V);
         const dmg = C.gun.dmg * (enemy ? D.dmg : 0.9);
         fireShell(s, muz, velFrom(s2.el, s2.az, SHELL_V), dmg, { small: C.small });
-        rec.r = Math.max(enemy ? D.dispMin : 40, rec.r * 0.72);
+        rec.r = Math.max(enemy ? D.dispMin : 40, rec.r * 0.8);
       }
     }
   }
@@ -2991,6 +3042,7 @@ const MISSIONS = [
       A.at(7, () => radio('Gunnery', 'Put the crosshair on a contact to lock it. Hold the left mouse button to fire; fire control leads the target for you.', 'tip'));
       A.at(16, () => radio('Gunnery', 'Right mouse button for binoculars. E launches a missile at the locked target. W and S ring the engine telegraph, A and D put the rudder over.', 'tip'));
       A.at(30, () => radio('CIC', 'If they launch missiles, the close-in guns engage automatically. Press C to fire chaff and decoys.', 'tip'));
+      A.at(44, () => radio('Navigator', 'Their salvos walk closer each time. Put the rudder over or change speed to throw off their aim.', 'tip'));
     },
   },
   {
