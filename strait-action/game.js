@@ -12,6 +12,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 
 /* ------------------------------------------------------------------ */
 /* Utilities                                                           */
@@ -60,12 +61,28 @@ function fbm(x, y, s = 0, oct = 5) {
 /* ------------------------------------------------------------------ */
 const canvas = $('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
-let pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+// Graphics presets. 'auto' starts at High (Medium on phones and tablets) and steps down if the frame rate sags.
+const GFX = {
+  ultra: { label: 'Ultra', pr: 2, shadow: 4096, water: 1024, msaa: 4, bloom: true },
+  high: { label: 'High', pr: 1.5, shadow: 2048, water: 512, msaa: 4, bloom: true },
+  medium: { label: 'Medium', pr: 1, shadow: 1024, water: 256, msaa: 2, bloom: true },
+  low: { label: 'Low', pr: 0.75, shadow: 0, water: 256, msaa: 0, bloom: false },
+};
+const GFX_ORDER = ['ultra', 'high', 'medium', 'low'];
+const GFX_STATE = { mode: 'auto', level: window.matchMedia('(pointer: coarse)').matches ? 'medium' : 'high' };
+try {
+  const m = localStorage.getItem('straitfire3d-gfx'), a = localStorage.getItem('straitfire3d-gfx-auto');
+  if (m === 'auto' || GFX[m]) GFX_STATE.mode = m;
+  if (GFX[a] && a !== 'ultra') GFX_STATE.level = a;
+} catch (e) { /* storage blocked */ }
+if (GFX_STATE.mode !== 'auto') GFX_STATE.level = GFX_STATE.mode;
+const gfxNow = () => GFX[GFX_STATE.level];
+let pixelRatio = Math.min(window.devicePixelRatio || 1, gfxNow().pr);
 renderer.setPixelRatio(pixelRatio);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.4;
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = gfxNow().shadow > 0;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const MAX_ANISO = renderer.capabilities.getMaxAnisotropy();
 
@@ -136,10 +153,11 @@ const GradeShader = {
     }`,
 };
 
-const composerRT = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: 4 });
+const composerRT = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: gfxNow().msaa });
 const composer = new EffectComposer(renderer, composerRT);
 composer.addPass(new RenderPass(scene, camera));
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.32, 0.5, 0.9);
+bloomPass.enabled = gfxNow().bloom;
 composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
 const gradePass = new ShaderPass(GradeShader);
@@ -171,6 +189,17 @@ sky.material.depthWrite = false;
 sky.material.depthTest = false;
 scene.add(sky);
 const SKY = sky.material.uniforms;
+// After dark the scattering model leaves a flat grey; blend to a moonlit navy that lightens toward the horizon.
+SKY.nightK = { value: 0 }; SKY.nightCol = { value: new THREE.Color(0.006, 0.0105, 0.024) }; SKY.moonDir = { value: new V3(0, 1, 0) };
+function patchSky(mat) {
+  mat.fragmentShader = mat.fragmentShader
+    .replace('uniform vec3 up;', 'uniform vec3 up;\nuniform float nightK; uniform vec3 nightCol, moonDir;')
+    .replace('gl_FragColor = vec4( retColor, 1.0 );',
+      'vec3 nc = nightCol * (0.3 + 0.7 * pow(1.0 - max(direction.y, 0.0), 4.0)) + nightCol * 2.5 * pow(max(dot(direction, moonDir), 0.0), 24.0);\n' +
+      ' retColor = mix(retColor, nc, nightK);\n gl_FragColor = vec4( retColor, 1.0 );');
+  mat.needsUpdate = true;
+}
+patchSky(sky.material);
 
 const CloudShader = {
   vertexShader: /* glsl */`
@@ -225,21 +254,88 @@ clouds.renderOrder = -8;
 clouds.frustumCulled = false;
 scene.add(clouds);
 
-// Stars and moon for night missions
+// Stars and moon for night missions. Stars carry their own colour and brightness and twinkle;
+// a band of fainter ones traces the Milky Way, with its glow drawn on a dome just inside them.
+// The band runs from the galactic core, low in the south-west, up almost overhead and down to the north-east.
+const GALAXY_CORE = dirFrom(20, 218);
+const GALAXY_N = GALAXY_CORE.clone().cross(dirFrom(74, 35)).normalize();
+const GAL_U = GALAXY_CORE.clone(), GAL_W = GALAXY_N.clone().cross(GAL_U).normalize();
 const stars = (() => {
-  const n = 2600, pos = new Float32Array(n * 3);
+  const base = 2600, band = 4200, n = base + band;
+  const pos = new Float32Array(n * 3), col = new Float32Array(n * 3), size = new Float32Array(n);
   setSeed(42);
+  const d = new V3();
   for (let i = 0; i < n; i++) {
-    const a = srand() * TAU, y = Math.pow(srand(), 0.7);
-    const r = Math.sqrt(1 - y * y);
-    pos[i * 3] = Math.cos(a) * r * 30000; pos[i * 3 + 1] = y * 30000; pos[i * 3 + 2] = Math.sin(a) * r * 30000;
+    if (i < base) { const a = srand() * TAU, y = Math.pow(srand(), 0.7), r = Math.sqrt(1 - y * y); d.set(Math.cos(a) * r, y, Math.sin(a) * r); }
+    else {
+      const a = srand() * TAU, off = Math.sqrt(-2 * Math.log(srand() + 1e-9)) * Math.cos(TAU * srand()) * 0.075;
+      d.copy(GAL_U).multiplyScalar(Math.cos(a)).addScaledVector(GAL_W, Math.sin(a)).addScaledVector(GALAXY_N, off).normalize();
+      if (d.y < -0.02) { i--; continue; }
+    }
+    pos[i * 3] = d.x * 30000; pos[i * 3 + 1] = d.y * 30000; pos[i * 3 + 2] = d.z * 30000;
+    const m = Math.pow(srand(), i < base ? 5 : 9), b = (i < base ? 0.45 : 0.3) + m * 3.4, t = srand();
+    const c = t < 0.12 ? [1, 0.74, 0.55] : t < 0.32 ? [1, 0.9, 0.78] : t < 0.85 ? [0.9, 0.94, 1] : [0.72, 0.82, 1];
+    col[i * 3] = c[0] * b; col[i * 3 + 1] = c[1] * b; col[i * 3 + 2] = c[2] * b;
+    size[i] = (i < base ? 1.4 : 1.05) + m * 2.6;
   }
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  const m = new THREE.PointsMaterial({ color: 0xdfe8ff, size: 1.6, sizeAttenuation: false, transparent: true, opacity: 0, depthWrite: false, depthTest: false, fog: false });
-  const p = new THREE.Points(g, m); p.renderOrder = -9; p.frustumCulled = false; scene.add(p);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('starCol', new THREE.BufferAttribute(col, 3));
+  g.setAttribute('starSize', new THREE.BufferAttribute(size, 1));
+  const m = new THREE.ShaderMaterial({
+    uniforms: { opacity: { value: 0 }, time: { value: 0 }, pr: { value: 1 } },
+    vertexShader: /* glsl */`
+      attribute vec3 starCol; attribute float starSize; uniform float time, pr; varying vec3 vC; varying float vA;
+      void main(){
+        vec3 d = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        float ph = fract(sin(dot(position.xz, vec2(0.0123, 0.0457))) * 4375.85);
+        float ext = smoothstep(-0.02, 0.22, d.y);
+        // Low stars twinkle hard and redden; high ones hold steady
+        float tw = 1.0 - (0.12 + 0.3 * (1.0 - ext)) * (0.5 + 0.5 * sin(time * (2.0 + ph * 7.0) + ph * 40.0));
+        vA = tw * ext;
+        vC = starCol * mix(vec3(1.0, 0.75, 0.55), vec3(1.0), ext);
+        gl_PointSize = starSize * pr * mix(0.75, 1.0, ext);
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float opacity; varying vec3 vC; varying float vA;
+      void main(){ float r = length(gl_PointCoord - 0.5); float a = smoothstep(0.5, 0.08, r); gl_FragColor = vec4(vC, a * vA * opacity); }`,
+    transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending,
+  });
+  const p = new THREE.Points(g, m); p.renderOrder = -9; p.frustumCulled = false; p.visible = false; scene.add(p);
   // Layer 1 is seen by the main camera only, so stars stay out of the sea's reflection.
   p.layers.set(1); camera.layers.enable(1);
   return p;
+})();
+const milky = (() => {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(29000, 96, 48), new THREE.ShaderMaterial({
+    uniforms: { opacity: { value: 0 }, gN: { value: GALAXY_N }, core: { value: GALAXY_CORE } },
+    vertexShader: /* glsl */`varying vec3 vD; void main(){ vD = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */`
+      uniform float opacity; uniform vec3 gN, core; varying vec3 vD;
+      float h3(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+      float n3(vec3 x){
+        vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(h3(i), h3(i + vec3(1.0, 0.0, 0.0)), f.x), mix(h3(i + vec3(0.0, 1.0, 0.0)), h3(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+                   mix(mix(h3(i + vec3(0.0, 0.0, 1.0)), h3(i + vec3(1.0, 0.0, 1.0)), f.x), mix(h3(i + vec3(0.0, 1.0, 1.0)), h3(i + vec3(1.0)), f.x), f.y), f.z);
+      }
+      float fbm3(vec3 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { v += a * n3(p); p = p * 2.07 + 3.1; a *= 0.5; } return v; }
+      void main(){
+        vec3 d = normalize(vD);
+        float lat = dot(d, gN), c = max(dot(d, core), 0.0);
+        float wdt = 0.09 + 0.07 * pow(c, 3.0);
+        float band = exp(-lat * lat / (2.0 * wdt * wdt));
+        float cl = fbm3(d * 7.0);
+        // The dark rift: dust lanes along the middle of the band
+        float dust = smoothstep(0.42, 0.72, fbm3(d * 14.0 + 7.0)) * exp(-pow(lat - 0.012, 2.0) / 0.0016);
+        float glow = band * (0.12 + 1.5 * cl * cl) * (1.0 - 0.85 * dust) * (0.5 + 1.2 * pow(c, 4.0));
+        vec3 col = mix(vec3(0.55, 0.62, 0.82), vec3(1.0, 0.84, 0.64), pow(c, 3.0)) * glow;
+        gl_FragColor = vec4(col * 0.06 * smoothstep(-0.03, 0.3, d.y) * opacity, 1.0);
+      }`,
+    side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending,
+  }));
+  m.renderOrder = -9.5; m.frustumCulled = false; m.visible = false; m.layers.set(1); scene.add(m);
+  return m;
 })();
 const moon = (() => {
   const c = document.createElement('canvas'); c.width = c.height = 256;
@@ -319,7 +415,7 @@ function oceanGeometry() {
   return g;
 }
 const water = new Water(oceanGeometry(), {
-  textureWidth: 512, textureHeight: 512, waterNormals: makeWaterNormals(),
+  textureWidth: gfxNow().water, textureHeight: gfxNow().water, waterNormals: makeWaterNormals(),
   sunDirection: new V3(0, 1, 0), sunColor: 0xffffff, waterColor: 0x0b3442, distortionScale: 3.0, fog: true,
 });
 water.rotation.x = -Math.PI / 2;
@@ -366,10 +462,21 @@ water.material.fragmentShader = water.material.fragmentShader
 water.material.needsUpdate = true;
 scene.add(water);
 const WATER = water.material.uniforms;
+// Water.js keeps its reflection target private; catch it on first use so the quality setting can resize it.
+let WATER_RT = null;
+{
+  const ob = water.onBeforeRender;
+  water.onBeforeRender = function (r, s, c, ...rest) {
+    if (WATER_RT) return ob.call(this, r, s, c, ...rest);
+    const set = r.setRenderTarget;
+    r.setRenderTarget = function (t, ...a) { if (t && !WATER_RT) WATER_RT = t; return set.call(this, t, ...a); };
+    try { ob.call(this, r, s, c, ...rest); } finally { r.setRenderTarget = set; }
+  };
+}
 
 const sun = new THREE.DirectionalLight(0xffffff, 3);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.castShadow = gfxNow().shadow > 0;
+sun.shadow.mapSize.setScalar(gfxNow().shadow || 1024);
 Object.assign(sun.shadow.camera, { left: -160, right: 160, top: 160, bottom: -160, near: 10, far: 1500 });
 sun.shadow.bias = -0.0005;
 sun.shadow.normalBias = 0.06;
@@ -379,7 +486,7 @@ scene.add(hemi);
 
 // A tiny scene used to bake the environment map and to sample the horizon colour.
 const envScene = new THREE.Scene();
-const skyEnv = new Sky(); skyEnv.material.uniforms = SKY; skyEnv.scale.setScalar(60); envScene.add(skyEnv);
+const skyEnv = new Sky(); skyEnv.material.uniforms = SKY; patchSky(skyEnv.material); skyEnv.scale.setScalar(60); envScene.add(skyEnv);
 const cloudEnv = new THREE.Mesh(new THREE.SphereGeometry(45, 32, 16), cloudMat); envScene.add(cloudEnv);
 const pmrem = new THREE.PMREMGenerator(renderer);
 let envRT = null;
@@ -430,6 +537,7 @@ function applyEnv(name) {
   SKY.turbidity.value = E.turb; SKY.rayleigh.value = E.ray; SKY.mieCoefficient.value = E.mie; SKY.mieDirectionalG.value = E.mieG;
   SKY.sunPosition.value.copy(sunD);
   lightDir.copy(E.night ? dirFrom(E.moonElev, E.moonAzim) : sunD);
+  SKY.nightK.value = E.night ? 1 : 0; SKY.moonDir.value.copy(lightDir);
   renderer.toneMappingExposure = E.exp;
 
   // Fog takes the colour of the sky just above the horizon, so the sea fades into it.
@@ -476,7 +584,9 @@ function applyEnv(name) {
   hemi.groundColor.set(E.night ? 0x05080c : 0x1a2226);
   hemi.intensity = E.night ? 0.35 : 1.0 * E.light;
 
-  stars.material.opacity = E.stars ? 0.9 : 0;
+  stars.visible = milky.visible = !!E.stars;
+  stars.material.uniforms.opacity.value = E.stars ? 1 : 0;
+  milky.material.uniforms.opacity.value = E.stars ? 1 : 0;
   moon.visible = !!E.night;
   if (E.night) moon.position.copy(lightDir).multiplyScalar(28000);
 
@@ -719,6 +829,49 @@ function noiseTex() {
     }
     g.putImageData(img, 0, 0);
   }, { repeat: true });
+}
+
+// Battle damage: a torn hole, burnt primer at the rim, soot rising above it and rust weeping below.
+function scarTex(big) {
+  return canvasTex(256, 256, (g, w) => {
+    g.clearRect(0, 0, w, w);
+    const c = w / 2, hole = big ? w * 0.11 : w * 0.1;
+    const blot = (x, y, R, col, a) => {
+      const gr = g.createRadialGradient(x, y, 0, x, y, R);
+      gr.addColorStop(0, `rgba(${col},${a})`); gr.addColorStop(1, `rgba(${col},0)`);
+      g.fillStyle = gr; g.fillRect(x - R, y - R, R * 2, R * 2);
+    };
+    // Soot: blotchy, heavier above the hole where the smoke went
+    for (let i = 0; i < (big ? 90 : 50); i++) {
+      const a = rand(TAU), r = Math.pow(Math.random(), 0.8) * w * 0.32;
+      const x = c + Math.cos(a) * r * 0.9, y = c + Math.sin(a) * r - (Math.sin(a) < 0 ? r * 0.25 : 0);
+      blot(x, y, rand(w * 0.05, w * 0.15), '14,12,10', rand(0.3, 0.6));
+    }
+    blot(c, c - hole * 0.6, hole * 3.4, '12,10,9', 0.8);
+    for (let i = 0; i < 9; i++) { const x = c + rand(-w * 0.18, w * 0.18); blot(x, c - rand(w * 0.15, w * 0.3), rand(w * 0.07, w * 0.12), '10,9,8', rand(0.15, 0.3)); }
+    // Paint burnt back to grey primer, then a scorched brown ring at the rim
+    for (let i = 0; i < 26; i++) { const a = rand(TAU), r = hole * rand(1.2, 2.2); blot(c + Math.cos(a) * r, c + Math.sin(a) * r, rand(5, 12), '120,112,100', rand(0.15, 0.35)); }
+    blot(c, c, hole * 2, '70,38,18', 0.85);
+    // Rust weeping down from the wound
+    for (let i = 0; i < (big ? 9 : 5); i++) {
+      const x = c + rand(-hole, hole), len = rand(w * 0.1, w * 0.32), wd = rand(1.5, 4);
+      const gr = g.createLinearGradient(0, c, 0, c + len);
+      gr.addColorStop(0, 'rgba(96,46,20,0.75)'); gr.addColorStop(1, 'rgba(96,46,20,0)');
+      g.fillStyle = gr; g.fillRect(x, c, wd, len);
+    }
+    // The hole: jagged, black, with curled plating catching the light
+    g.beginPath();
+    for (let i = 0; i <= 22; i++) { const a = i / 22 * TAU, r = hole * (i % 2 ? rand(0.55, 0.85) : rand(0.9, 1.25)); g.lineTo(c + Math.cos(a) * r, c + Math.sin(a) * r); }
+    g.closePath(); g.fillStyle = 'rgba(4,4,4,1)'; g.fill();
+    g.strokeStyle = 'rgba(150,140,128,0.55)'; g.lineWidth = 1.5; g.stroke();
+    speckle(g, w, w, big ? 260 : 140, '20,18,16', 0.2, 0.6, 1, 3);
+    // Fade everything to nothing at the edge so the decal never shows a square
+    g.globalCompositeOperation = 'destination-in';
+    const fade = g.createRadialGradient(c, c, w * 0.25, c, c, w * 0.5);
+    fade.addColorStop(0, 'rgba(0,0,0,1)'); fade.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = fade; g.fillRect(0, 0, w, w);
+    g.globalCompositeOperation = 'source-over';
+  });
 }
 
 function flagTex(nation) {
@@ -2063,7 +2216,7 @@ function modelFor(cls, no, player = false, side = 'PLA') {
     const nation = NATION[cls] || (side === 'ALLIED' ? 'ROC' : 'PRC');
     const x = -m.L / 2 + (C.model === 'cv' ? 10 : 2.5), y = C.model === 'cv' ? 20 : m.P.deckAt(x);
     const pole = new THREE.Mesh(cyl(0.06, 0.09, 6.5, 6), MAT.metal); pole.position.set(x, y + 3.25, 0);
-    const flag = new THREE.Mesh(FLAG_GEO, flagMat(nation)); flag.position.set(x, y + 5.4, 0);
+    const flag = new THREE.Mesh(FLAG_GEO, flagMat(nation)); flag.position.set(x, y + 5.4, 0); flag.userData.noScar = true;
     m.group.add(pole, flag);
   }
   return m;
@@ -2144,10 +2297,13 @@ class Ship {
     if (dx * dx + dz * dz > R * R) return false;
     const f = dx * fx(this.h) + dz * fz(this.h), s = dx * Math.cos(this.h) + dz * Math.sin(this.h);
     if (Math.abs(f) > this.L / 2 + pad) return false;
-    const half = Math.max(this.hitHalf || this.P.dk((f + this.L / 2) / this.L), 1.5);
+    const t = clamp((f + this.L / 2) / this.L, 0, 1);
+    const half = Math.max(this.hitHalf || this.P.dk(t), 1.5);
     if (Math.abs(s) > half + pad) return false;
-    const y = p.y - this.obj.position.y;
-    return y > -this.P.D - 3 && y < this.top + pad;
+    // Silhouette, not a box to the masthead: hull up to the deck edge, a superstructure block amidships
+    const y = p.y - this.obj.position.y, deck = this.P.fb(t);
+    const roof = Math.abs(f) < this.L * 0.3 ? deck + (this.top - deck) * 0.5 : deck + 1.5;
+    return y > -this.P.D - 3 && y < roof + pad;
   }
   get pos() { return new V3(this.x, this.obj.position.y + this.top * 0.3, this.z); }
 }
@@ -2155,7 +2311,10 @@ class Ship {
 function spawnShip(cls, side, o) { const s = new Ship(cls, side, o); W.ships.push(s); return s; }
 function removeShip(s) {
   scene.remove(s.obj);
-  s.obj.traverse(o => { if (o.userData.decal) { o.material.map.dispose(); o.material.dispose(); o.geometry.dispose(); } });
+  s.obj.traverse(o => {
+    if (o.userData.decal) { o.material.map.dispose(); o.material.dispose(); o.geometry.dispose(); }
+    if (o.userData.scar) o.geometry.dispose();
+  });
   if (s.wake) s.wake.dispose();
 }
 
@@ -2207,6 +2366,18 @@ function shipEffects(s, dt) {
       fxSpray.emit(sx + rand(-2, 2), 0.6, sz + rand(-2, 2), -s.vx * 0.2 + rand(-1, 1), rand(0.5, 2), -s.vz * 0.2 + rand(-1, 1), rand(1.5, 3), 3, 7 + s.B * 0.3, L, L, L, 0.35 * sp, 0.5, -3);
     }
   }
+  // Heavy seas: when the bow drops into a rising swell it throws solid water up and over the forecastle
+  if (!s.isSub && !s.dead && SEA.amp >= 4 && s.L < 200 && s.speed > 4) {
+    const l = s.L * 0.42, bx = s.x + fx(s.h) * l, bz = s.z + fz(s.h) * l;
+    const rel = swellH(bx, bz) - (s.obj.position.y + Math.sin(s.pitch) * l);
+    const rate = s.bowRel === undefined ? 0 : (rel - s.bowRel) / Math.max(dt, 1e-3);
+    s.bowRel = rel;
+    s.slamCd = (s.slamCd || 0) - dt;
+    if (rate > SLAM_RATE && s.slamCd <= 0) {
+      bowSlam(s, clamp((rate - SLAM_RATE) / 1.4, 0.15, 1) * clamp(s.speed / s.maxSpeed * 1.4, 0.35, 1), bx, bz, L);
+      s.slamCd = rand(3.5, 6);
+    }
+  }
   // Funnel exhaust haze
   for (const f of s.model.funnels) {
     if (Math.random() < dt * 2.5) {
@@ -2232,6 +2403,30 @@ function shipEffects(s, dt) {
   }
 }
 
+const SLAM_RATE = 1.25;
+function bowSlam(s, k, bx, bz, L) {
+  const rx = Math.cos(s.h), rz = Math.sin(s.h), deck = s.obj.position.y + s.P.F * 0.7;
+  const n = Math.round(30 + 70 * k), W = Math.min(1, 0.55 + L * 0.6);
+  for (let i = 0; i < n; i++) {
+    const side = Math.random() < 0.5 ? -1 : 1, w = rand(0.5, s.B * 0.5), out = rand(2, 10) * k, up = rand(6, 20) * (0.45 + k * 0.75), aft = rand(1, 6);
+    fxSpray.emit(bx + rx * side * w - fx(s.h) * rand(0, 8), deck + rand(-1, 1.5), bz + rz * side * w - fz(s.h) * rand(0, 8),
+      rx * side * out + s.vx * 0.85 - fx(s.h) * aft, up, rz * side * out + s.vz * 0.85 - fz(s.h) * aft,
+      rand(1.8, 3.4), rand(2.5, 5), rand(9, 20) * (0.6 + k * 0.6), W * 0.94, W * 0.97, W, 0.7 + 0.3 * k, 0.4, -9.8);
+  }
+  // Sheets of white water peeling off the flare on both sides
+  for (const side of [-1, 1]) for (let i = 0; i < 10 + 14 * k; i++) {
+    const t = rand(0, 18);
+    fxSpray.emit(bx - fx(s.h) * t + rx * side * s.B * 0.45, 1, bz - fz(s.h) * t + rz * side * s.B * 0.45,
+      rx * side * rand(4, 9) + s.vx * 0.9, rand(3, 8) * k + 2, rz * side * rand(4, 9) + s.vz * 0.9,
+      rand(1.2, 2.2), 3, rand(8, 14), W * 0.94, W * 0.97, W, 0.75, 0.5, -9.8);
+  }
+  s.slams = (s.slams || 0) + 1;
+  if (s.player) {
+    sfx('splash', 0.5 + k * 0.7);
+    PL.shake = Math.min(3, PL.shake + k * 0.6);
+    if (k > 0.5) PL.lensWet = Math.max(PL.lensWet || 0, 0.3 + 0.7 * k);
+  } else if (camera.position.distanceToSquared(_v.set(bx, 0, bz)) < 2500 * 2500) sfxAt('splash', bx, 0, bz, 0.5 + k);
+}
 function sinkStep(s, dt) {
   s.deadT += dt;
   s.speed *= 1 - 0.25 * dt;
@@ -2269,14 +2464,75 @@ function sinkStep(s, dt) {
 function damageShip(s, amt, p, src, kind) {
   if (s.dead || s.safe) return;
   s.hp -= amt;
-  if (s.player) onPlayerHit(amt, p, kind);
-  if (src && src.player && kind !== 'ground') PL.stats.hits++;
+  if (p && amt >= 5 && kind !== 'ground') addScar(s, p, amt);
+  if (s.player) onPlayerHit(amt, p, kind, src);
+  if (src && src.player && kind !== 'ground') { PL.stats.hits++; hitMark(amt >= 25, false); }
   if (p && amt >= 20 && s.fires.length < 5 && !s.isSub && Math.random() < 0.55) {
     const lp = s.obj.worldToLocal(p.clone());
     lp.x = clamp(lp.x, -s.L * 0.45, s.L * 0.45); lp.y = Math.max(lp.y, s.P.F * 0.9); lp.z = clamp(lp.z, -s.B * 0.4, s.B * 0.4);
     s.fires.push(lp);
   }
   if (s.hp <= 0) killShip(s, src);
+}
+/* Scars: hits leave holes and soot on the plating, projected onto the hull where the ray from outboard meets it. */
+const SCAR = { mats: null, budget: 0 };
+const _ray = new THREE.Raycaster(), _scarO = new THREE.Object3D();
+function scarMats() {
+  if (!SCAR.mats) SCAR.mats = [scarTex(false), scarTex(true)].map(map => stdMat({ map, transparent: true, depthWrite: false, roughness: 0.95, metalness: 0.05 }));
+  return SCAR.mats;
+}
+// Only triangles near the hit go to DecalGeometry, which would otherwise walk the whole merged hull.
+function scarPatch(mesh, centre, R, nWorld) {
+  const g = mesh.geometry, pos = g.attributes.position, nor = g.attributes.normal;
+  if (!pos || !nor || pos.isInterleavedBufferAttribute || nor.isInterleavedBufferAttribute) return null;
+  const inv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+  const c = centre.clone().applyMatrix4(inv), nl = nWorld.clone().transformDirection(inv);
+  const pa = pos.array, na = nor.array, ia = g.index ? g.index.array : null, n = ia ? ia.length : pos.count;
+  const P = [], N = [];
+  for (let i = 0; i + 2 < n; i += 3) {
+    const a = (ia ? ia[i] : i) * 3, b = (ia ? ia[i + 1] : i + 1) * 3, d = (ia ? ia[i + 2] : i + 2) * 3;
+    if (Math.max(pa[a], pa[b], pa[d]) < c.x - R || Math.min(pa[a], pa[b], pa[d]) > c.x + R) continue;
+    if (Math.max(pa[a + 1], pa[b + 1], pa[d + 1]) < c.y - R || Math.min(pa[a + 1], pa[b + 1], pa[d + 1]) > c.y + R) continue;
+    if (Math.max(pa[a + 2], pa[b + 2], pa[d + 2]) < c.z - R || Math.min(pa[a + 2], pa[b + 2], pa[d + 2]) > c.z + R) continue;
+    // Faces seen edge-on would smear the texture into streaks
+    if (Math.abs((na[a] + na[b] + na[d]) * nl.x + (na[a + 1] + na[b + 1] + na[d + 1]) * nl.y + (na[a + 2] + na[b + 2] + na[d + 2]) * nl.z) < 0.75) continue;
+    for (const k of [a, b, d]) { P.push(pa[k], pa[k + 1], pa[k + 2]); N.push(na[k], na[k + 1], na[k + 2]); }
+  }
+  if (!P.length) return null;
+  const sg = new THREE.BufferGeometry();
+  sg.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  sg.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+  const m = new THREE.Mesh(sg); m.matrixWorld.copy(mesh.matrixWorld);
+  return m;
+}
+function addScar(s, p, amt) {
+  if (s.isSub || s.dead || (s.scars || 0) >= 18 || SCAR.budget > 3) return;
+  if (camera.position.distanceToSquared(p) > 8000 * 8000) return;
+  const lp = s.obj.worldToLocal(p.clone());
+  const side = lp.z >= 0 ? 1 : -1;
+  const o = new V3(clamp(lp.x, -s.L * 0.46, s.L * 0.46), clamp(lp.y, 0.7, s.top), side * (s.B + 25)).applyMatrix4(s.obj.matrixWorld);
+  const dir = new V3(0, rand(-0.12, 0.04), -side).normalize().transformDirection(s.obj.matrixWorld);
+  _ray.set(o, dir); _ray.far = s.B + 60;
+  const hit = _ray.intersectObject(s.obj, true).find(h => h.object.isMesh && !h.object.isInstancedMesh && h.face && !h.object.userData.scar && !h.object.userData.decal && !h.object.userData.noScar && h.object.material && !h.object.material.transparent);
+  if (!hit) return;
+  const big = amt >= 25;
+  const sz = Math.min(big ? clamp(5 + amt * 0.06, 6, 11) : rand(2.6, 3.6), Math.max(2.4, s.L * 0.15));
+  const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+  if (n.dot(dir) > 0) n.negate();
+  _scarO.position.copy(hit.point); _scarO.lookAt(hit.point.clone().add(n)); _scarO.rotation.z += rand(-0.2, 0.2);
+  const src = scarPatch(hit.object, hit.point, sz * 0.75, n);
+  if (!src) return;
+  const geo = new DecalGeometry(src, hit.point, _scarO.rotation, new V3(sz, sz, Math.max(2.5, sz * 0.6)));
+  src.geometry.dispose();
+  if (!geo.attributes.position.count) { geo.dispose(); return; }
+  // The log depth buffer ignores polygon offset, so lift the scar off the plating instead.
+  geo.translate(n.x * 0.1, n.y * 0.1, n.z * 0.1);
+  geo.applyMatrix4(new THREE.Matrix4().copy(hit.object.matrixWorld).invert());
+  const m = new THREE.Mesh(geo, scarMats()[big ? 1 : 0]);
+  m.userData.scar = true; m.receiveShadow = true; m.renderOrder = 1;
+  hit.object.add(m);
+  s.scars = (s.scars || 0) + 1;
+  SCAR.budget++;
 }
 function killShip(s, src) {
   s.dead = true; s.hp = 0; s.killedBy = src; s.order = 0;
@@ -2412,7 +2668,7 @@ function launchMissile(kind, owner, from, dir, target, o = {}) {
     speed: o.speed0 ?? (kind === 'sam' ? 90 : 35), max: o.max ?? { asm: 270, sam: 820, asroc: 300, bm: 1700 }[kind],
     t: 0, life: { asm: 110, sam: 16, asroc: 45, bm: 30 }[kind], boost: o.boost ?? (kind === 'asm' ? 1.5 : 0.5),
     dmg: o.dmg ?? 0, pk: o.pk ?? 0.7, alt: rand(6, 11), decoy: null, aim: o.aim ? o.aim.clone() : null, trail: 0, dead: false, vx: 0, vy: 0, vz: 0,
-    prof: o.prof ? ASM[o.prof] : null, ph: rand(TAU), lost: false, pd: !!o.pd,
+    prof: o.prof ? ASM[o.prof] : null, ph: rand(TAU), lost: false, pd: !!o.pd, via: o.via ? o.via.clone() : null,
   };
   if (m.prof) { m.max = m.prof.cruise; m.alt = m.prof.alt + rand(-1, 1.5); if (!o.dmg) m.dmg = m.prof.dmg; }
   if (m.pd) { m.max = 1000; m.life = 7; }
@@ -2464,6 +2720,8 @@ function updateMissiles(dt) {
         const tt = m.p.distanceTo(tg.isAir || tg.isMissile ? tg.p : _v.set(tg.x, 0, tg.z)) / m.speed;
         aim = tg.isAir || tg.isMissile ? _v.set(tg.p.x + tg.vx * tt, tg.p.y + (tg.vy || 0) * tt, tg.p.z + tg.vz * tt) : _v.set(tg.x + tg.vx * tt, tg.top * 0.35 + tg.obj.position.y, tg.z + tg.vz * tt);
       } else if (m.aim) aim = m.aim;
+      // Dogleg: fly out to a turn point first, so a coordinated salvo arrives from several bearings
+      if (m.via && !m.decoy) { if (Math.hypot(m.via.x - m.p.x, m.via.z - m.p.z) < 700) m.via = null; else aim = _v.set(m.via.x, m.alt, m.via.z); }
       if (m.t > m.boost && aim && !m.lost) {
         const dxz = Math.hypot(aim.x - m.p.x, aim.z - m.p.z);
         let ty = aim.y, rate = 3.5;
@@ -2691,7 +2949,7 @@ function setupPlayer(side, x, z, h) {
   const ps = PLAYER_SHIP[side];
   const s = spawnShip(ps.cls, side, { player: true, name: ps.name, no: ps.no, x, z, h, speed: CLASS[ps.cls].speed * 0.8, hpMul: 1000 / CLASS[ps.cls].hp, priority: 1.25 });
   s.order = s.speed;
-  PL.ship = s; PL.side = side; PL.yaw = 0; PL.pitch = -0.07; PL.telegraph = 5; PL.rudder = 0; PL.lock = null; PL.dmg = 0; PL.shake = 0;
+  PL.ship = s; PL.side = side; PL.dmgBy = {}; PL.shellHits = []; PL.tipEvade = false; PL.yaw = 0; PL.pitch = -0.07; PL.telegraph = 5; PL.rudder = 0; PL.lock = null; PL.dmg = 0; PL.shake = 0;
   PL.stats = { shells: 0, hits: 0, msl: 0, kills: 0, air: 0, intercepts: 0 };
   PL.sys = { gun: 100, radar: 100, launchers: 100, engines: 100, steering: 100 };
   PL.dcT = 0; PL.dcCd = 0; PL.ecmT = 0; PL.ecmCd = 0; PL.samCd = 0; PL.pdCd = 0; PL.lockManual = false; PL.track = false; PL.mcamM = null; PL.mcamHold = 0; PL.zoomLevel = 0; PL.zoomF = 1;
@@ -2841,13 +3099,13 @@ function playerWeapons(dt) {
     }
   }
   // Queued salvo launches
-  for (const q of PL.salvo) { q.t -= dt; if (q.t <= 0 && !q.done) { q.done = true; if (!q.target.dead) playerLaunch('asm', q.target, q.prof); } }
+  for (const q of PL.salvo) { q.t -= dt; if (q.t <= 0 && !q.done) { q.done = true; if (!q.target.dead) playerLaunch('asm', q.target, q.prof, q.spread); } }
   PL.salvo = PL.salvo.filter(q => !q.done);
   playerAirDefence(dt);
   PL.ecmT = Math.max(0, PL.ecmT - dt); PL.ecmCd -= dt;
 }
 
-function playerLaunch(kind, target, prof) {
+function playerLaunch(kind, target, prof, spread = 0) {
   const s = PL.ship;
   const S = SPECS[s.cls];
   const coal = PL.side === 'ALLIED';
@@ -2874,7 +3132,9 @@ function playerLaunch(kind, target, prof) {
     dir = new V3(0, 1, 0);
   }
   let m;
-  if (kind === 'asm') m = launchMissile('asm', s, from, dir, target, { prof: prof || PLAYER_ASM[PL.side], boost: coal ? 0.8 : 1.6 });
+  let via = null;
+  if (spread) { const r = Math.hypot(tx - s.x, tz - s.z) * 0.5; via = new V3(s.x + fx(b + spread) * r, 0, s.z + fz(b + spread) * r); }
+  if (kind === 'asm') m = launchMissile('asm', s, from, dir, target, { prof: prof || PLAYER_ASM[PL.side], boost: coal ? 0.8 : 1.6, via });
   else if (kind === 'sam') m = launchMissile('sam', s, from, dir, target, { pk: 0.85, boost: 0.45 });
   else if (kind === 'pd') m = launchMissile('sam', s, from, dir, target, { pk: 0.8, boost: 0.15, pd: true });
   else if (kind === 'asroc') m = launchMissile('asroc', s, from, dir, target, { boost: 1.0 });
@@ -2912,8 +3172,10 @@ function fireSpecialKey() {
     if (!tgts.length) { flashMsg('No surface targets in range'); return; }
     PL.special--;
     const lockShip = PL.lock && !PL.lock.isAir && !PL.lock.isMissile && !PL.lock.isSub ? PL.lock : null;
-    for (let i = 0; i < 4; i++) PL.salvo.push({ t: i * 0.45, target: lockShip && i < 2 ? lockShip : tgts[i % tgts.length], prof: 'harpoon' });
-    radio('Weapons', 'Harpoon salvo, four birds away.', '');
+    // Eight Harpoons from the two quad launchers, doglegged so they arrive together from a spread of bearings
+    const main = lockShip || tgts[0], spread = [-0.6, 0.6, -0.4, 0.4, -0.2, 0.2, -0.05, 0.05];
+    for (let i = 0; i < 8; i++) PL.salvo.push({ t: i * 0.35, target: i < 6 || tgts.length < 2 ? main : tgts.find(t => t !== main) || main, prof: 'harpoon', spread: spread[i] });
+    radio('Weapons', `Harpoon salvo, eight birds away on ${main.name}. Coordinated attack from several bearings.`, '');
   } else {
     const t = PL.lock && !PL.lock.isAir && !PL.lock.isMissile && !PL.lock.isSub ? PL.lock : null;
     const at = t ? new V3(t.x + t.vx * 6, 0, t.z + t.vz * 6) : PL.aimPoint.clone();
@@ -3195,12 +3457,19 @@ function starShellKey() {
   radio('Gunnery', 'Star shell away.', 'quiet');
 }
 
-function onPlayerHit(amt, p, kind) {
+function onPlayerHit(amt, p, kind, src) {
+  const by = (kind || 'other') + ':' + (src ? src.cls || src.kind || src.name || '?' : '-');
+  PL.dmgBy[by] = (PL.dmgBy[by] || 0) + Math.round(amt);
   PL.shake = Math.min(3, PL.shake + amt * 0.02 + 0.4);
   PL.dmg = Math.min(1, PL.dmg + amt / 300);
   PL.lastHit = MS.t;
   sfx('hit', 1);
   if (kind !== 'ground') sysHit(p, amt);
+  // Teach evasion: enemy fire control re-solves whenever we change course or speed
+  if (kind === 'shell') {
+    PL.shellHits = (PL.shellHits || []).filter(t => MS.t - t < 25); PL.shellHits.push(MS.t);
+    if (PL.shellHits.length >= 4 && !PL.tipEvade) { PL.tipEvade = true; radio('Navigator', 'Their salvos are walking onto us. Put the helm over or change speed to throw off their fire control.', 'tip'); }
+  }
   const hp = PL.ship.hp / PL.ship.maxHp;
   if (kind === 'asm') radio('Damage control', `Missile hit ${p && p.distanceTo(camera.getWorldPosition(_v2)) < 60 ? 'forward' : 'amidships'}! Fire parties away.`, 'bad');
   else if (kind === 'torp') radio('Damage control', 'Torpedo hit! Flooding in the engine room.', 'bad');
@@ -3334,6 +3603,15 @@ function drawOverlay() {
       octx.font = `500 ${11 * k}px "IBM Plex Mono", monospace`;
       lines.forEach((l, i) => octx.fillText(l, _sp.x + r + 8 * k, _sp.y - r + 10 * k + i * 14 * k));
     }
+  }
+  // Hit marker
+  if (PL.hitT > 0) {
+    const free = !PL.pointer && !PL.touch, x = free ? PL.cursor.x * w : w / 2, y = free ? PL.cursor.y * h : h / 2;
+    const a = Math.min(1, PL.hitT / 0.2), g0 = (PL.hitBig ? 8 : 6) * k + (1 - a) * 3 * k, l = (PL.hitBig ? 9 : 6) * k;
+    octx.strokeStyle = PL.hitKill ? `rgba(255,92,70,${a})` : `rgba(255,255,255,${a})`; octx.lineWidth = 2 * k;
+    octx.beginPath();
+    for (const [sx, sy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) { octx.moveTo(x + sx * g0, y + sy * g0); octx.lineTo(x + sx * (g0 + l), y + sy * (g0 + l)); }
+    octx.stroke();
   }
   // Fallback cursor crosshair
   if (!PL.pointer && !PL.touch) {
@@ -3491,7 +3769,7 @@ function updateHud(dt) {
   $('radarCap').textContent = `Radar ${radarRange / 1000} km${SEA.rain > 0.5 ? ' · rain clutter' : ''}${subs ? ` · sonar ${(sonarRange() / 1000).toFixed(1)} km` : ''}`;
   $('zoomTxt').textContent = `${PL.zoomF.toFixed(PL.zoomF < 3 ? 1 : 0)}× · mil scale`;
   // Objectives
-  $('objList').innerHTML = MS.objs.filter(o => !o.hidden).map(o => `<li class="${o.done ? 'done' : o.failed ? 'failed' : ''}${o.secondary ? ' sec' : ''}"><span></span>${o.text}${o.progress ? ` <em>${o.progress()}</em>` : ''}</li>`).join('');
+  $('objList').innerHTML = MS.objs.filter(o => !o.hidden).map(o => `<li class="${o.done ? 'done' : o.failed ? 'failed' : ''}${o.secondary ? ' sec' : ''}"><span></span><div>${o.text}${o.progress ? ` <em>${o.progress()}</em>` : ''}</div></li>`).join('');
   const tm = MS.t, rem = MS.limit ? Math.max(0, MS.limit - tm) : null;
   $('clock').innerHTML = `<b>${rem !== null ? fmtTime(rem) : fmtTime(tm)}</b><span>${rem !== null ? 'Hold until relieved' : MS.timeLabel + ' local'}</span>`;
   // Alerts
@@ -3555,6 +3833,17 @@ function aiShip(s, dt) {
   let d = Infinity;
   if (s.role === 'convoy' || s.role === 'hvu') desired = followPath(s);
   else if (s.role === 'cruise') { desired = s.h + Math.sin(TIME * 0.05 + s.phase) * 0.2; s.order = s.maxSpeed * 0.6; }
+  else if (s.escort && s.escort.some(c => !c.dead && !c.arrived)) {
+    // Escort: hold a station ahead of the convoy on the threat side, and only fight from near it
+    const live = s.escort.filter(c => !c.dead && !c.arrived), lead = live[0];
+    let cx = 0, cz = 0;
+    for (const c of live) { cx += c.x / live.length; cz += c.z / live.length; }
+    const sx = cx + fx(lead.h) * 900 + Math.cos(lead.h) * 600 * (s.escortSide || 1), sz = cz + fz(lead.h) * 900 + Math.sin(lead.h) * 600 * (s.escortSide || 1);
+    const dc = Math.hypot(sx - s.x, sz - s.z);
+    if (t) d = Math.hypot(t.x - s.x, t.z - s.z);
+    if (t && dc < 1500 && d < 9000) { desired = bearing(s.x, s.z, t.x, t.z) + (Math.PI / 2 - 0.3) * a.zigDir; s.order = s.maxSpeed * 0.75; }
+    else { desired = bearing(s.x, s.z, sx, sz); s.order = dc > 400 ? s.maxSpeed * 0.9 : Math.max(lead.speed, 5); }
+  }
   else if (t) {
     d = Math.hypot(t.x - s.x, t.z - s.z);
     const brg = bearing(s.x, s.z, t.x, t.z);
@@ -3595,7 +3884,8 @@ function aiShip(s, dt) {
         const s2 = solveBallistic(muz, aim, SHELL_V);
         const dmg = C.gun.dmg * (enemy ? D.dmg : 0.9);
         fireShell(s, muz, velFrom(s2.el, s2.az, SHELL_V), dmg, { small: C.small });
-        rec.r = Math.max((enemy ? D.dispMin : 40) * (1 + SEA.amp * 0.08), rec.r * 0.8);
+        // Spread grows with range: at 12 km a shell spends 14 s in the air and the solution is never as tight
+        rec.r = Math.max((enemy ? D.dispMin : 40) * (1 + SEA.amp * 0.08) * (0.6 + d / 8000), rec.r * 0.8);
       }
     }
   }
@@ -3742,12 +4032,14 @@ const MISSIONS = [
       ]);
       const port = { x: 0, z: -3700, label: A.P === 'ALLIED' ? 'Makung' : 'Pingtan', r: 700 };
       MS.waypoints = [port];
-      A.player(-1000, 300, 0);
+      A.player(A.ex(1000), 300, 0);
       const path = [{ x: 0, z: -1800 }, port];
-      for (const [x, z] of [[-350, 700], [380, 1300], [0, 1950]]) A.convoy('cargo', { x, z, h: 0, path, cruise: 12.5 });
-      A.ally('frigate', { x: 1200, z: -400, h: 0 });
+      const convoy = [[-350, 700], [380, 1300], [0, 1950]].map(([x, z]) => A.convoy('cargo', { x, z, h: 0, path, cruise: 12.5 }));
+      const esc = A.ally('frigate', { x: A.ex(-1200), z: -400, h: 0 });
+      esc.escort = convoy; esc.escortSide = A.P === 'ALLIED' ? -1 : 1;
       A.at(25, () => { for (let i = 0; i < 3; i++) A.enemy('fac', { x: A.ex(8000 + i * 300), z: -3200 + i * 500, h: A.away, tag: 'fac' }); radio('CIC', `Fast movers bearing ${fmtBrg(A.toward)}, 8 km. Missile boats, three of them.`, 'bad'); });
       A.at(80, () => { A.enemy('destroyer', { x: A.ex(13000), z: -1200, h: A.away }); A.enemy('frigate', { x: A.ex(12500), z: -2600, h: A.away }); radio('CIC', 'New surface group at 13 km: a destroyer and a frigate.', 'bad'); });
+      A.at(86, () => radio('Captain', A.P === 'ALLIED' ? 'That destroyer outguns us. Lock her (T) and send the Harpoon salvo (Q), and keep turning so her guns cannot settle.' : 'That destroyer outguns us. Lock her (T) and call in the DF-21D (Q), and keep turning so her guns cannot settle.', 'tip'));
       A.at(140, () => A.jets(A.E, 2));
       A.at(200, () => { for (let i = 0; i < 2; i++) A.enemy('fac', { x: A.ex(7000), z: -4400 + i * 600, h: A.away, tag: 'fac' }); radio('CIC', 'Two more missile boats breaking out from behind the islands.', 'bad'); });
       A.obj({ text: `Bring 2 of 3 merchant ships into ${port.label}`, need: 2, count: () => MS.arrived, fail: () => W.ships.filter(s => s.role === 'convoy' && (!s.dead || s.arrived)).length < 2, progress: () => `${MS.arrived}/2` });
@@ -3967,14 +4259,22 @@ function onShipKilled(s, src) {
   }
   if (state !== 'play') return;
   if (s.player) { radio('Captain', 'Abandon ship! Abandon ship!', 'bad'); endMission(false, `${s.name} was sunk.`); return; }
-  if (src && src.player) PL.stats.kills++;
+  if (src && src.player) { PL.stats.kills++; hitMark(true, true); }
   if (s.side !== PL.side) radio('CIC', `${s.name} is sinking${src && src.player ? '. Good shooting.' : '.'}`, 'good');
   else radio('CIC', `${s.name} has been hit and is going down.`, 'bad');
+}
+// Hit confirmation at the crosshair: white for a hit, red when it kills.
+function hitMark(big, kill) {
+  if (state !== 'play') return;
+  if (kill) { PL.hitKill = true; PL.hitT = 0.75; }
+  else if (!PL.hitKill || PL.hitT <= 0) { PL.hitKill = false; PL.hitT = 0.32; }
+  PL.hitBig = big || kill;
+  sfx('blip', 1, 0, kill ? 1150 : 2500);
 }
 function onJetKilled(j, by) {
   if (state !== 'play') return;
   if (j === W.helo) { radio('Air', `${j.name} is down! We have lost our helicopter.`, 'bad'); return; }
-  if (by && by.player) { PL.stats.air++; PL.stats.kills++; }
+  if (by && by.player) { PL.stats.air++; PL.stats.kills++; hitMark(true, true); }
   if (MS.def && MS.def.endless && j.side !== PL.side) MS.score += Math.round(80 * (1 + MS.wave * 0.1) * (by && by.player ? 2 : 1));
   if (j.side !== PL.side) radio('Air', `${j.name} splashed${by && by.player ? ' by our fire' : ''}.`, 'good');
 }
@@ -4148,17 +4448,72 @@ function updateSunGlare() {
   GRADE.sunPos.value.set(_sunV.x * 0.5 + 0.5, _sunV.y * 0.5 + 0.5);
   GRADE.sunCol.value.copy(sun.color).multiplyScalar(night ? 0.5 : 1);
 }
+/* Graphics quality: applied live, and in Auto mode stepped down when the frame rate sags. */
+function setQuality(level) {
+  const prev = gfxNow();
+  GFX_STATE.level = level;
+  const q = gfxNow();
+  pixelRatio = Math.min(window.devicePixelRatio || 1, q.pr);
+  bloomPass.enabled = q.bloom;
+  for (const rt of [composer.renderTarget1, composer.renderTarget2]) if (rt.samples !== q.msaa) { rt.samples = q.msaa; rt.dispose(); }
+  if (WATER_RT && WATER_RT.width !== q.water) WATER_RT.setSize(q.water, q.water);
+  if (q.shadow !== prev.shadow) {
+    if (q.shadow) { sun.shadow.mapSize.setScalar(q.shadow); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
+    if (renderer.shadowMap.enabled !== q.shadow > 0) {
+      // Changing castShadow changes the light setup, which makes three.js rebuild every lit material, cached ones included
+      renderer.shadowMap.enabled = sun.castShadow = q.shadow > 0;
+      scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => (m.needsUpdate = true)); });
+    }
+  }
+  resize();
+  syncGfxUi();
+}
+function setGfxMode(mode) {
+  GFX_STATE.mode = mode;
+  try { localStorage.setItem('straitfire3d-gfx', mode); } catch (e) { /* storage blocked */ }
+  PERF.t = PERF.n = 0; PERF.grace = 3; PERF.downs = 0;
+  setQuality(mode === 'auto' ? (GFX_STATE.level === 'ultra' ? 'high' : GFX_STATE.level) : mode);
+}
+const PERF = { t: 0, n: 0, grace: 4, fast: 0, downs: 0 };
+function perfWatch(raw) {
+  if (GFX_STATE.mode !== 'auto' || state !== 'play' || document.hidden || raw > 0.5) { PERF.t = PERF.n = 0; return; }
+  if (PERF.grace > 0) { PERF.grace -= raw; return; }
+  PERF.t += raw; PERF.n++;
+  if (PERF.t < 5) return;
+  const fps = PERF.n / PERF.t, i = GFX_ORDER.indexOf(GFX_STATE.level);
+  PERF.t = PERF.n = 0;
+  let next = null;
+  if (fps < 28 && i < GFX_ORDER.length - 1) { next = GFX_ORDER[i + 1]; PERF.downs++; PERF.fast = 0; }
+  else if (fps > 57 && PERF.downs === 0 && GFX_STATE.level !== 'high' && GFX_STATE.level !== 'ultra') { if (++PERF.fast >= 3) { next = GFX_ORDER[i - 1]; PERF.fast = 0; } }
+  else PERF.fast = 0;
+  if (!next) return;
+  setQuality(next);
+  try { localStorage.setItem('straitfire3d-gfx-auto', next); } catch (e) { /* storage blocked */ }
+  flashMsg(`Graphics ${GFX[next].label}${PERF.downs ? ' for a smoother frame rate' : ''}`);
+  PERF.grace = 3;
+}
+function syncGfxUi() {
+  document.querySelectorAll('.gfxSel').forEach(sel => {
+    sel.value = GFX_STATE.mode;
+    sel.options[0].textContent = GFX_STATE.mode === 'auto' ? `Auto · ${gfxNow().label} now` : 'Auto';
+  });
+}
+
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(0.05, Math.max(0.001, (now - (frame.last || now)) / 1000));
+  const raw = (now - (frame.last || now)) / 1000;
+  const dt = Math.min(0.05, Math.max(0.001, raw));
   frame.last = now;
+  perfWatch(raw);
+  SCAR.budget = Math.max(0, SCAR.budget - dt * 3);
   if (state === 'loading') return;
   if (state === 'play') { updateWorld(dt, true); updateMission(dt); }
   else if (state === 'debrief') updateWorld(dt, false);
   else if (state === 'menu' || state === 'brief') { updateWorld(dt, false); updateAttract(dt); }
   // Sky, sea and weather follow the camera
   const cp = camera.getWorldPosition(_v2);
-  sky.position.copy(cp); clouds.position.copy(cp); stars.position.copy(cp);
+  sky.position.copy(cp); clouds.position.copy(cp); stars.position.copy(cp); milky.position.copy(cp);
+  if (stars.visible) { stars.material.uniforms.time.value = TIME; stars.material.uniforms.pr.value = pixelRatio; }
   water.position.x = cp.x; water.position.z = cp.z;
   WATER.swT.value = TIME;
   if (moon.visible) { moon.position.copy(lightDir).multiplyScalar(28000).add(cp); moon.lookAt(cp); }
@@ -4177,6 +4532,9 @@ function frame(now) {
   GRADE.damage.value = PL.dmg * 0.6 + (PL.ship && state === 'play' && PL.ship.hp / PL.ship.maxHp < 0.25 ? 0.15 + 0.1 * Math.sin(TIME * 5) : 0);
   GRADE.flash.value *= Math.pow(0.001, dt);
   GRADE.time.value = TIME;
+  PL.lensWet = Math.max(0, (PL.lensWet || 0) - dt * 0.22);
+  PL.hitT = Math.max(0, (PL.hitT || 0) - dt);
+  GRADE.wet.value = Math.max(SEA.rain, PL.lensWet);
   flushTracers();
   FLAG_T.value = TIME;
   updateSunGlare();
@@ -4372,6 +4730,8 @@ document.querySelectorAll('input[name="side"]').forEach(r => r.addEventListener(
   CFG.side = r.value; document.body.dataset.side = r.value; renderMissionList(); startAttract();
 }));
 document.querySelectorAll('input[name="diff"]').forEach(r => r.addEventListener('change', () => { CFG.diff = r.value; }));
+document.querySelectorAll('.gfxSel').forEach(sel => sel.addEventListener('change', () => setGfxMode(sel.value)));
+syncGfxUi();
 
 /* ------------------------------------------------------------------ */
 /* Boot                                                                */
@@ -4417,7 +4777,10 @@ function simulate(seconds, auto = true) {
         PL.pitch = tgt.isAir || tgt.isMissile ? Math.atan2(tgt.p.y - 20, d) : -Math.atan2(18, d);
         PL.fire = true;
         if (Math.random() < dt / 15 || (tgt.isSub && Math.random() < dt / 6)) fireMissileKey();
-        if (W.ships.length && Math.random() < dt / 60) fireSpecialKey();
+        // Save the special for the biggest ship in range, the way the in-game tips suggest
+        const big = foes.filter(o => !o.isSub && o.maxHp >= 700 && Math.hypot(o.x - s.x, o.z - s.z) < 26000).sort((a, b) => b.maxHp - a.maxHp)[0];
+        if (big && PL.special > 0 && Math.random() < dt / 8) { const keep = PL.lock; PL.lock = big; fireSpecialKey(); PL.lock = keep; }
+        else if (!big && W.ships.length && Math.random() < dt / 150) fireSpecialKey();
         PL.telegraph = d > 9000 ? 6 : 5;
         PL.keys.KeyA = false; PL.keys.KeyD = false;
       }
@@ -4427,10 +4790,12 @@ function simulate(seconds, auto = true) {
       if (!W.helo && W.datums.some(d => !d.sub.dead) && PL.heloCd <= 0 && PL.heloSorties > 0) heloKey();
       const mp = MS.waypoints[0] || (!W.ships.some(o => o.isSub && o.detected && !o.dead) && W.datums.find(d => !d.sub.dead));
       if (mp) { const b = wrapPi(bearing(s.x, s.z, mp.x, mp.z) - s.h); PL.rudder = clamp(b, -1, 1) * (Math.hypot(mp.x - s.x, mp.z - s.z) > 2500 ? 1 : 0); }
+      // Under gunfire, weave to spoil their solution
+      if ((PL.shellHits || []).some(t => MS.t - t < 30)) PL.rudder = Math.sin(MS.t / 7) > 0 ? 0.8 : -0.8;
     }
     updateWorld(dt, true); updateMission(dt);
     flushTracers();
   }
   return { t: MS.t, over: MS.over, won: MS.won, reason: MS.reason, hp: PL.ship ? Math.round(PL.ship.hp) : null, stats: { ...PL.stats }, objs: MS.objs.map(o => (o.done ? '+' : o.failed ? 'x' : '-') + o.text), ships: W.ships.length, jets: W.jets.length, missiles: W.missiles.length };
 }
-window.__strait = { simulate, startMission, openBrief, MS, PL, W, CFG, get state() { return state; }, set state(v) { state = v; }, applyEnv, camera, scene };
+window.__strait = { simulate, startMission, openBrief, MS, PL, W, CFG, get state() { return state; }, set state(v) { state = v; }, applyEnv, camera, scene, setGfxMode, GFX_STATE, damageShip, SEA, bowSlam };

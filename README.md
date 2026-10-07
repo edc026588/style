@@ -86,7 +86,7 @@ A second game lives in [`battleship/`](battleship/index.html): classic Battleshi
 
 ## Strait Fire
 
-A first-person naval combat game in [`strait-action/`](strait-action/index.html), set in the Taiwan Strait. You fight from the bridge wing of ROCS Kee Lung (Allied Coalition: Taiwan, the US and Japan) or the Type 055 destroyer Nanchang (PLA Navy) through a six-mission campaign:
+A first-person naval combat game in [`strait-action/`](strait-action/index.html), set in the Taiwan Strait. You fight from the bridge wing of ROCS Kee Lung (Allied Coalition: Taiwan, the US and Japan) or the Type 055 destroyer Nanchang (PLA Navy) through a six-mission campaign, plus an endless Open Patrol:
 
 | # | Mission | Setting |
 | --- | --- | --- |
@@ -96,11 +96,14 @@ A first-person naval combat game in [`strait-action/`](strait-action/index.html)
 | 4 | Vampire Raid | Defend a fleet supply ship against waves of strike aircraft and missile salvos |
 | 5 | Night action | Hunt a missile-boat swarm among the islands using star shells |
 | 6 | Carrier Strike | Break through a carrier group's escorts in a thunderstorm and sink the carrier |
+| 7 | Open Patrol | Endless waves of surface, air and submarine contacts; play for score |
 
-It's rendered with [three.js](https://threejs.org): a physical sky with procedural clouds and sun glare, a reflective ocean with swell, whitecaps and backlit wave crests that every ship rides, PBR ship models with welded-plate detail and flying national ensigns, islands and the distant mountains of Taiwan and Fujian, plus bloom, smoke, fire, burning fuel, debris and spray. Every model, texture and sound is generated in code.
+It's rendered with [three.js](https://threejs.org): a physical sky with procedural clouds and sun glare, a reflective ocean with swell, whitecaps and backlit wave crests that every ship rides, PBR ship models with welded-plate detail and flying national ensigns, islands and the distant mountains of Taiwan and Fujian, plus bloom, smoke, fire, burning fuel, debris and spray. Hits leave shell holes and soot on the plating where they land, bows throw green water over the forecastle in heavy seas, and night missions have a moonlit sky with twinkling stars and the Milky Way. Every model, texture and sound is generated in code.
+
+A Graphics setting on the title and pause screens picks Ultra, High, Medium or Low (resolution, shadow detail, reflections, anti-aliasing and bloom). Auto, the default, starts at High (Medium on touch devices) and steps down if the frame rate drops below about 28 fps.
 
 Missile warfare is layered on both sides. Anti-ship missiles fly real profiles: sea-skimming Harpoons that weave on final approach, YJ-18s that sprint supersonic for the last few kilometres, Hsiung Feng IIIs at Mach 2 (Kee Lung carries six). You defend with automatic or manual area SAMs (SM-2 or HHQ-9), HQ-10 point defence on the Type 055, one close-in gun channel per mount, chaff and a jammer that can break seeker lock. A threat board lists each inbound with bearing, range, time to impact and how it is being engaged, and a missile camera follows your own shots to impact. Hits knock out the gun, radar, launchers, engines or steering until a repair party fixes them.
 
-Controls: mouse to look and aim, hold left click to fire the gun, scroll to zoom (1× to 12×) or hold right click for binoculars, `W`/`S` engine telegraph, `A`/`D` rudder, `T` next target, `V` track the locked target, `E` missile at the locked target, `B` salvo size, `G` air defence auto/manual, `Q` special weapon (Harpoon salvo or DF-21D strike), `C` chaff, `J` jammer, `H` repair party, `K` missile camera, `F` star shell, `R` radar range, `Esc`/`P` pause. Touch screens get an on-screen stick and buttons. Serve the folder over HTTP like the main game.
+Controls: mouse to look and aim, hold left click to fire the gun, scroll to zoom (1× to 12×) or hold right click for binoculars, `W`/`S` engine telegraph, `A`/`D` rudder, `T` next target, `V` track the locked target, `E` missile at the locked target, `B` salvo size, `G` air defence auto/manual, `Q` special weapon (eight-Harpoon salvo or DF-21D strike), `C` chaff, `J` jammer, `H` repair party, `L` launch or retask the helicopter (`Shift L` recalls it), `K` missile camera, `F` star shell, `R` radar range, `Esc`/`P` pause. Touch screens get an on-screen stick and buttons. Serve the folder over HTTP like the main game.
 
 The original top-down version is still there as [`strait-action/arcade.html`](strait-action/arcade.html).
