@@ -335,12 +335,13 @@ water.material.fragmentShader = water.material.fragmentShader
   U.swA = { value: SWELL.map(c => new THREE.Vector4(c.dx, c.dz, c.k, c.a)) };
   U.swW = { value: SWELL.map(c => c.w) };
   U.swT = { value: 0 };
-  U.swAmp = { value: 0.4 }; U.foamAmt = { value: 0 }; U.foamLight = { value: 1 };
+  U.swAmp = { value: 0.4 }; U.foamAmt = { value: 0 }; U.foamLight = { value: 1 }; U.swQ = { value: 0.2 };
   const decl = 'uniform vec4 swA[5]; uniform float swW[5]; uniform float swT;\n';
   const fn = 'float swellH(vec2 p){ float h = 0.0; for (int i = 0; i < 5; i++) h += swA[i].w * sin(dot(swA[i].xy, p) * swA[i].z - swW[i] * swT + float(i) * 1.7); return h; }\n';
   water.material.vertexShader = water.material.vertexShader
-    .replace('uniform mat4 textureMatrix;', decl + 'uniform mat4 textureMatrix;')
-    .replace('void main() {', fn + 'void main() {\n vec4 wp0 = modelMatrix * vec4( position, 1.0 );\n vec3 pos = position;\n pos.z += swellH(wp0.xz) * (1.0 - smoothstep(900.0, 3200.0, distance(wp0.xz, cameraPosition.xz)));')
+    .replace('uniform mat4 textureMatrix;', decl + 'uniform float swQ;\nuniform mat4 textureMatrix;')
+    .replace('void main() {', fn + 'void main() {\n vec4 wp0 = modelMatrix * vec4( position, 1.0 );\n vec3 pos = position;\n float fade = 1.0 - smoothstep(900.0, 3200.0, distance(wp0.xz, cameraPosition.xz));\n pos.z += swellH(wp0.xz) * fade;\n' +
+      ' vec2 gd = vec2(0.0); for (int i = 0; i < 5; i++) { gd += swA[i].xy * (swQ / (swA[i].z * 5.0)) * cos(dot(swA[i].xy, wp0.xz) * swA[i].z - swW[i] * swT + float(i) * 1.7); }\n pos.x += gd.x * fade; pos.y -= gd.y * fade;')
     .replace('mirrorCoord = modelMatrix * vec4( position, 1.0 );', 'mirrorCoord = modelMatrix * vec4( pos, 1.0 );')
     .replace('vec4 mvPosition =  modelViewMatrix * vec4( position, 1.0 );', 'vec4 mvPosition = modelViewMatrix * vec4( pos, 1.0 );');
   water.material.fragmentShader = water.material.fragmentShader
@@ -457,11 +458,14 @@ function applyEnv(name) {
   }
 
   WATER.sunDirection.value.copy(lightDir);
+  FX_SUN.dir.value.copy(lightDir);
+  FX_SUN.tint.value.copy(new THREE.Color(E.sunCol)).multiplyScalar(E.night ? 0.05 : (E.clouds > 0.9 ? 0.25 : 0.7) * E.light);
   WATER.sunColor.value.copy(sunC).multiplyScalar(E.night ? 0.35 : (E.clouds > 0.9 ? 0.25 : 1));
   WATER.waterColor.value.set(E.water);
   WATER.distortionScale.value = E.dist * 0.28;
   swellAmp = 0.11 * Math.pow(E.sea, 1.4);
   WATER.swAmp.value = swellAmp * 0.75;
+  WATER.swQ.value = smooth(1.5, 6, E.sea) * 0.6;
   WATER.foamAmt.value = 0.08 + smooth(2, 6, E.sea) * 0.85;
   WATER.foamLight.value = E.night ? 0.12 : 0.3 + E.light * 0.7;
   WATER.size.value = 2.2 + E.sea * 0.15;
@@ -792,6 +796,15 @@ function makeTextures() {
   TEX.cv = { '73': carrierDeckTex('73'), '18': carrierDeckTex('18') };
   TEX.smoke = puffTex(); TEX.spray = sprayTex(); TEX.fire = fireTex(); TEX.flash = flashTex();
   TEX.dot = radialTex([[0, 'rgba(255,255,255,1)'], [0.25, 'rgba(255,255,255,0.7)'], [1, 'rgba(255,255,255,0)']], 64);
+  TEX.hullFoam = canvasTex(256, 64, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    for (let i = 0; i < 1600; i++) {
+      const v = Math.pow(Math.random(), 1.8);
+      g.fillStyle = `rgba(255,255,255,${(1 - v) * rand(0.2, 0.7)})`;
+      g.fillRect(rand(w), (1 - v) * h - 2, rand(3, 18), rand(1, 3));
+    }
+  }, { srgb: false, repeat: true });
+  TEX.hullFoam.wrapT = THREE.ClampToEdgeWrapping;
   TEX.foam = foamTex(false); TEX.kelvin = foamTex(true); TEX.noise = noiseTex(); TEX.plates = plateNormalTex();
 }
 
@@ -806,8 +819,9 @@ function makeMaterials() {
   for (const k of ['light', 'mid', 'dark', 'black', 'navy']) {
     const sup = stdMat({ map: TEX.sup[k], roughness: 0.55, metalness: 0.25 });
     sup.userData.tri = 12;
-    PAINT[k] = { hull: stdMat({ map: TEX.hull[k], normalMap: TEX.plates, normalScale: new THREE.Vector2(0.55, 0.55), roughness: 0.6, metalness: 0.3, side: THREE.DoubleSide }), sup };
+    PAINT[k] = { hull: stdMat({ userData: {}, map: TEX.hull[k], normalMap: TEX.plates, normalScale: new THREE.Vector2(0.55, 0.55), roughness: 0.6, metalness: 0.3, side: THREE.DoubleSide }), sup };
     sup.normalMap = TEX.plates; sup.normalScale = new THREE.Vector2(0.3, 0.3);
+    PAINT[k].hull.userData.hull = true;
   }
   MAT.deck = stdMat({ map: TEX.deck, roughness: 0.9, metalness: 0.1, side: THREE.DoubleSide });
   MAT.dark = stdMat({ color: 0x2b2f32, roughness: 0.6, metalness: 0.45 });
@@ -841,6 +855,12 @@ function triplanarUV(g, s) {
 }
 
 const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _m4 = new THREE.Matrix4();
+// Builder meshes carry baked vertex shading, so they use vertex-colour twins of the shared materials.
+const AO_MATS = new Map();
+function aoMat(m) {
+  if (!AO_MATS.has(m)) { const c = m.clone(); c.vertexColors = true; c.userData = { ...m.userData }; AO_MATS.set(m, c); }
+  return AO_MATS.get(m);
+}
 class Builder {
   constructor() { this.parts = new Map(); }
   add(geo, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
@@ -854,6 +874,19 @@ class Builder {
     if (!g.attributes.normal) g.computeVertexNormals();
     if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
     if (mat.userData.tri) triplanarUV(g, mat.userData.tri);
+    // Baked shading: parts darken toward their base (contact occlusion); hulls get a wet band at the waterline.
+    const pos = g.attributes.position, n = pos.count, col = new Float32Array(n * 3);
+    g.computeBoundingBox();
+    const y0 = g.boundingBox.min.y, h = Math.max(0.01, g.boundingBox.max.y - y0);
+    const hull = mat.userData.hull, flat = mat === MAT.deck || mat.userData.noAO;
+    for (let i = 0; i < n; i++) {
+      const y = pos.getY(i);
+      let c = 1;
+      if (hull) c = lerp(0.58, 1, smooth(-0.4, 1.4, y)) * lerp(0.9, 1, smooth(1.4, 6, y));
+      else if (!flat) c = lerp(0.5, 1, smooth(y0, y0 + Math.min(1.8, h * 0.45), y)) * lerp(0.88, 1, smooth(y0, y0 + h, y));
+      col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = c;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.clearGroups();
     if (!this.parts.has(mat)) this.parts.set(mat, []);
     this.parts.get(mat).push(g);
@@ -861,7 +894,7 @@ class Builder {
   }
   build(group, { cast = true, receive = true } = {}) {
     for (const [mat, list] of this.parts) {
-      const mesh = new THREE.Mesh(mergeGeometries(list, false), mat);
+      const mesh = new THREE.Mesh(mergeGeometries(list, false), aoMat(mat));
       mesh.castShadow = cast; mesh.receiveShadow = receive;
       group.add(mesh);
     }
@@ -990,6 +1023,39 @@ function addArmLauncher(B, x, y, mats, twin) {
     B.add(new THREE.BoxGeometry(4.2, 0.5, 0.5), MAT.metal, x + 1.0, y + 2.0, s * 1.0, 0, 0, 0.35);
   }
 }
+// A naval helicopter: fuselage, tail boom, fin, engines and (if folded) rotor blades swung aft.
+function addHelo(B, mat, x, y, z, ry = 0, folded = true) {
+  const M = new THREE.Matrix4().compose(new V3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), new V3(1, 1, 1));
+  const part = (g, m, px, py, pz, rx = 0, rry = 0, rz = 0) => {
+    const l = new THREE.Matrix4().compose(new V3(px, py, pz), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, rry, rz, 'YZX')), new V3(1, 1, 1));
+    B.addM(g, m, M.clone().multiply(l));
+  };
+  const body = new THREE.CapsuleGeometry(1.15, 5.6, 6, 12); body.rotateZ(Math.PI / 2); body.scale(1, 1, 0.82);
+  part(body, mat, 0.5, 1.7, 0);
+  part(new THREE.SphereGeometry(0.95, 12, 8, 0, TAU, 0, Math.PI / 2), MAT.glass, 3.4, 1.75, 0, 0, 0, -1.2);
+  part(rod(0.42, 0.22, 7.4, 8), mat, -9.6, 2.15, 0);
+  part(new THREE.BoxGeometry(1.4, 2.4, 0.16), mat, -9.7, 3.3, 0);
+  part(new THREE.BoxGeometry(0.9, 0.1, 2.8), mat, -9.2, 2.3, 0);
+  part(new THREE.BoxGeometry(3.2, 0.9, 1.6), mat, 0, 2.9, 0);
+  part(cyl(0.2, 0.25, 0.8, 8), MAT.dark, 0.4, 3.6, 0);
+  for (const zz of [-1.1, 1.1]) part(cyl(0.3, 0.3, 0.2, 10), MAT.black, 1.8, 0.35, zz, Math.PI / 2, 0, 0);
+  part(cyl(0.3, 0.3, 0.2, 10), MAT.black, -6.5, 0.6, 0, Math.PI / 2, 0, 0);
+  if (folded) for (const zz of [-0.35, -0.12, 0.12, 0.35]) part(new THREE.BoxGeometry(7.8, 0.06, 0.5), MAT.dark, -3.6, 3.95, zz);
+}
+function helicopterMesh(side) {
+  const g = new THREE.Group(), B = new Builder();
+  addHelo(B, MAT.jet[side], 0, 0, 0, 0, false);
+  B.build(g, { cast: true, receive: false });
+  const rotor = new THREE.Group();
+  for (let i = 0; i < 4; i++) { const b = new THREE.Mesh(new THREE.BoxGeometry(8.2, 0.06, 0.5), MAT.dark); b.position.x = 4.1; const a = new THREE.Group(); a.rotation.y = i * Math.PI / 2; a.add(b); rotor.add(a); }
+  // A faint disc reads as a spinning rotor at a distance
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(8.2, 32), new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }));
+  disc.rotation.x = -Math.PI / 2; rotor.add(disc);
+  rotor.position.set(0.4, 4.0, 0);
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.05, 0.25), MAT.dark); tail.position.set(-9.9, 3.5, 0.2);
+  g.add(rotor, tail);
+  return { group: g, rotor, tail };
+}
 function addBoat(B, x, y, z) {
   const g = new THREE.CapsuleGeometry(1.1, 5.5, 4, 10); g.rotateZ(Math.PI / 2);
   B.add(g, MAT.orange, x, y + 1.3, z, 0, 0, 0, 1, 0.6, 1);
@@ -1054,7 +1120,7 @@ const SPECS = {
     funnels: [{ x: 8, l: 7.5, w: 5, h: 8, y: 5, z: -1.4 }, { x: -20, l: 7.5, w: 5, h: 9, y: 5, z: 1.4 }],
     masts: [{ x: 16, y: 9, h: 15, type: 'lattice' }, { x: -12, y: 5, h: 12, type: 'lattice' }],
     guns: [{ x: 61, type: 'mk45' }, { x: -66, type: 'mk45', aft: true }], arms: [{ x: 47, twin: true }, { x: -57, twin: true }],
-    ciws: [{ x: 5, y: 5, z: -5.8, type: 'phalanx' }, { x: -33, y: 6, z: 5.4, type: 'phalanx' }], canisters: [{ x: -27, y: 5 }], boats: [{ x: -1, y: 5, z: 7.2 }, { x: -1, y: 5, z: -7.2 }] },
+    ciws: [{ x: 5, y: 5, z: -5.8, type: 'phalanx' }, { x: -33, y: 6, z: 5.4, type: 'phalanx' }], canisters: [{ x: -27, y: 5, n: 6 }], boats: [{ x: -1, y: 5, z: 7.2 }, { x: -1, y: 5, z: -7.2 }] },
   burke: { label: 'Arleigh Burke-class destroyer', L: 155, B: 20, D: 6.3, F: 7.2, hull: { sheer: 2.2, fine: 0.55, flare: 0.5 }, paint: 'mid', taper: 0.12,
     blocks: [{ x: 14, l: 30, w: 16, h: 9.5, panels: true, bridge: true }, { x: -18, l: 30, w: 14, h: 5 }, { x: -44, l: 12, w: 15, h: 5 }],
     funnels: [{ x: -6, l: 7, w: 6, h: 7, y: 5 }, { x: -28, l: 7, w: 6, h: 7, y: 5 }],
@@ -1091,6 +1157,26 @@ const SPECS = {
     funnels: [{ x: -78, l: 10, w: 8, h: 10, y: 10 }], masts: [{ x: 86, y: 12, h: 11, type: 'pyramid' }], gantries: [-40, -5, 30, 60], ciws: [{ x: 96, y: 12, z: 0, type: 't730' }], heli: { x: -108, l: 20 } },
 };
 
+// Foam where the hull meets the sea: thick at the bow wave, thinning aft, brighter with speed.
+function hullFoamGeo(P, zOff = 0) {
+  const N = 40, pos = [], uv = [], idx = [];
+  const ring = [];
+  for (let i = 0; i <= N; i++) ring.push([i / N, 1]);
+  for (let i = N; i >= 0; i--) ring.push([i / N, -1]);
+  ring.forEach(([t, side], k) => {
+    const x = -P.L / 2 + t * P.L, w = Math.max(P.wl(t), 0.3);
+    const bow = smooth(0.7, 1, t), stern = 1 - smooth(0, 0.1, t);
+    const out = 1.2 + bow * 4.5 + stern * 2.5;
+    pos.push(x + bow * 1.5, 0, side * w + zOff, x + bow * 2.5 - stern * 3, 0, side * (w + out) + zOff);
+    uv.push(t * P.L / 25, 0, t * P.L / 25, 1);
+    if (k < ring.length - 1) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
 function decalMesh(text, h, P, x, side) {
   const tex = numberTex(text);
   const mat = stdMat({ map: tex, transparent: true, roughness: 0.65, metalness: 0.1, polygonOffset: true, polygonOffsetFactor: -2, depthWrite: false });
@@ -1135,7 +1221,7 @@ function buildWarship(key, { player = false, hullNo = '' } = {}) {
   addShipDetail(B, S, P, mats);
   for (const v of S.vls || []) addVLS(B, v.x, P.deckAt(v.x), v.l, v.w);
   for (const c of S.ciws || []) addCIWS(B, c.x, P.deckAt(c.x) + c.y, c.z, c.type, mats);
-  for (const c of S.canisters || []) addCanisters(B, c.x, P.deckAt(c.x) + c.y, mats);
+  for (const c of S.canisters || []) addCanisters(B, c.x, P.deckAt(c.x) + c.y, mats, c.n || 4);
   for (const a of S.arms || []) addArmLauncher(B, a.x, P.deckAt(a.x), mats, a.twin);
   for (const bt of S.boats || []) addBoat(B, bt.x, P.deckAt(bt.x) + bt.y, bt.z);
   for (const gx of S.gantries || []) {
@@ -1148,6 +1234,8 @@ function buildWarship(key, { player = false, hullNo = '' } = {}) {
     const x = S.heli.x, y = P.deckAt(x);
     const g = new THREE.PlaneGeometry(S.heli.l, S.B * 0.85); g.rotateX(-Math.PI / 2);
     B.add(g, MAT.heli, x, y + 0.3, 0);
+    // A helicopter lashed down on deck, blades folded
+    if (!player) addHelo(B, MAT.jet[key.startsWith('t') ? 'PLA' : 'ALLIED'], x + S.heli.l * 0.15, y + 0.3, 0, Math.PI);
   }
   if (player) addRails(B, 30, S.L / 2 - 6, S.B * 0.42, P.deckAt(40));
   B.build(group);
@@ -1462,12 +1550,13 @@ function buildRange(o) {
 /* ------------------------------------------------------------------ */
 /* Particles: instanced camera-facing quads                            */
 /* ------------------------------------------------------------------ */
+const FX_SUN = { dir: { value: new V3(0, 1, 0) }, tint: { value: new THREE.Color(1, 0.9, 0.8) } };
 const FX_VERT = /* glsl */`
   #include <common>
   #include <logdepthbuf_pars_vertex>
   attribute vec3 iPos; attribute float iSize; attribute float iRot; attribute vec4 iCol;
-  uniform float fogDensity;
-  varying vec2 vUv; varying vec4 vCol; varying float vFog;
+  uniform float fogDensity; uniform vec3 sunDir;
+  varying vec2 vUv; varying vec4 vCol; varying float vFog; varying float vScat;
   void main(){
     vUv = uv; vCol = iCol;
     vec4 mv = modelViewMatrix * vec4(iPos, 1.0);
@@ -1476,12 +1565,14 @@ const FX_VERT = /* glsl */`
     gl_Position = projectionMatrix * mv;
     #include <logdepthbuf_vertex>
     float d = -mv.z; vFog = 1.0 - exp(-fogDensity * fogDensity * d * d);
+    vec3 vd = normalize(iPos - cameraPosition);
+    vScat = pow(max(dot(vd, normalize(sunDir)), 0.0), 6.0);
   }`;
 const FX_FRAG = /* glsl */`
   #include <common>
   #include <logdepthbuf_pars_fragment>
-  uniform sampler2D map; uniform vec3 fogColor;
-  varying vec2 vUv; varying vec4 vCol; varying float vFog;
+  uniform sampler2D map; uniform vec3 fogColor; uniform vec3 sunTint;
+  varying vec2 vUv; varying vec4 vCol; varying float vFog; varying float vScat;
   void main(){
     #include <logdepthbuf_fragment>
     vec4 t = texture2D(map, vUv);
@@ -1490,7 +1581,11 @@ const FX_FRAG = /* glsl */`
     #ifdef ADDITIVE
       gl_FragColor = vec4(t.rgb * vCol.rgb * a * (1.0 - vFog), 1.0);
     #else
-      gl_FragColor = vec4(mix(t.rgb * vCol.rgb, fogColor, vFog), a);
+      // Thin edges catch the light, thick cores shade themselves; looking toward the sun the smoke glows.
+      float thin = 1.0 - t.a;
+      vec3 c = t.rgb * vCol.rgb * (0.78 + 0.42 * thin);
+      c += sunTint * vScat * thin * 0.9 * (0.25 + dot(vCol.rgb, vec3(0.33)));
+      gl_FragColor = vec4(mix(c, fogColor, vFog), a);
     #endif
   }`;
 
@@ -1506,7 +1601,7 @@ class FX {
     g.instanceCount = 0;
     this.geo = g;
     const mat = new THREE.ShaderMaterial({
-      uniforms: { map: { value: tex }, fogColor: FOG_U.color, fogDensity: FOG_U.density },
+      uniforms: { map: { value: tex }, fogColor: FOG_U.color, fogDensity: FOG_U.density, sunDir: FX_SUN.dir, sunTint: FX_SUN.tint },
       vertexShader: FX_VERT, fragmentShader: FX_FRAG, transparent: true, depthWrite: false,
       blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending, defines: additive ? { ADDITIVE: '' } : {},
     });
@@ -1899,8 +1994,10 @@ const ASM = {
 };
 const ASM_TYPE = { kidd: 'harpoon', burke: 'harpoon', mogami: 'type17', chengkung: 'hf3', kh6: 'hf2', t055: 'yj18', t052d: 'yj18', t054a: 'yj83', t022: 'yj83' };
 const JET_ASM = { ALLIED: 'agm84', PLA: 'yj83k' };
-const PLAYER_ASM = { ALLIED: 'harpoon', PLA: 'yj18' };
-const SPECIAL_NAME = { ALLIED: 'HF-3 salvo', PLA: 'DF-21D strike' };
+const PLAYER_ASM = { ALLIED: 'hf3', PLA: 'yj18' };
+// Kee Lung carries six Hsiung Feng III in canisters amidships, whatever the mission.
+const FIXED_ASM = { ALLIED: 6 };
+const SPECIAL_NAME = { ALLIED: 'Harpoon salvo', PLA: 'DF-21D strike' };
 const SAM_NAME = { ALLIED: 'SM-2', PLA: 'HHQ-9' };
 const NATION = { kidd: 'ROC', chengkung: 'ROC', kh6: 'ROC', haikun: 'ROC', panshih: 'ROC', burke: 'US', nimitz: 'US', mogami: 'JP' };
 const PLAYER_SHIP = { ALLIED: { cls: 'kidd', name: 'ROCS Kee Lung', no: '1801', jets: 'f16' }, PLA: { cls: 't055', name: 'Nanchang', no: '101', jets: 'j20' } };
@@ -1953,6 +2050,14 @@ function modelFor(cls, no, player = false, side = 'PLA') {
   m.funnels = S ? (S.funnels || []).map(f => new V3(f.x, m.P.deckAt(f.x) + (f.y || 0) + f.h + 0.6, f.z || 0)) : C.model === 'cargo' ? [new V3(-64, m.P.deckAt(-64) + 23.5, 0)] : [];
   m.ciwsPts = S ? (S.ciws || []).map(c => Object.assign(new V3(c.x, m.P.deckAt(c.x) + c.y + 1.8, c.z), { type: c.type }))
     : C.model === 'cv' ? [[130, -24], [-140, -30], [-150, 24]].map(([x, z]) => Object.assign(new V3(x, 19.5, z), { type: 'gun' })) : [new V3(0, m.top * 0.6, 0)];
+  // Foam collar at the waterline, with its own material so each ship can set its strength
+  if (C.model !== 'sub') {
+    const fm = new THREE.MeshBasicMaterial({ map: TEX.hullFoam, transparent: true, depthWrite: false, opacity: 0.5, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -6 });
+    const offs = cls === 't022' ? [-4.1, 4.1] : [0];
+    m.foam = [];
+    for (const z of offs) { const f = new THREE.Mesh(hullFoamGeo(m.P, z), fm); f.position.y = 0.18; f.renderOrder = 1; f.frustumCulled = false; m.group.add(f); m.foam.push(f); }
+    m.foamMat = fm;
+  }
   // National ensign on a stern flagstaff
   if (C.model !== 'sub') {
     const nation = NATION[cls] || (side === 'ALLIED' ? 'ROC' : 'PRC');
@@ -1967,7 +2072,7 @@ function modelFor(cls, no, player = false, side = 'PLA') {
 /* ------------------------------------------------------------------ */
 /* World state                                                         */
 /* ------------------------------------------------------------------ */
-const W = { ships: [], jets: [], missiles: [], shells: [], rounds: [], torps: [], flares: [], chaff: [], islands: [], islandObjs: [], datums: [], pending: [] };
+const W = { ships: [], jets: [], missiles: [], shells: [], rounds: [], torps: [], flares: [], chaff: [], islands: [], islandObjs: [], datums: [], pending: [], helo: null };
 let TIME = 0;
 let CFG = { side: 'ALLIED', diff: 'veteran' };
 const hostile = (a, b) => a.side !== b.side;
@@ -2080,6 +2185,11 @@ function stepShip(s, dt) {
 
 const _v = new V3(), _v2 = new V3();
 function shipEffects(s, dt) {
+  if (s.model.foamMat) {
+    const sp = clamp(Math.abs(s.speed) / Math.max(1, s.maxSpeed), 0, 1);
+    s.model.foamMat.opacity = (0.25 + sp * 0.6 + SEA.amp * 0.04) * (0.45 + LIT() * 0.55) * (s.dead ? clamp(1 - s.sinkY / 6, 0, 1) : 1);
+    s.model.foamMat.map.offset.x = -TIME * sp * 0.4;
+  }
   const near = Math.hypot(s.x - camera.position.x, s.z - camera.position.z) < 14000;
   if (!near) return;
   const L = 0.35 + LIT() * 0.65;
@@ -2227,6 +2337,10 @@ function fireShell(owner, from, vel, dmg, o = {}) {
   W.shells.push({ p: from.clone(), v: vel, side: owner.side, dmg, owner, t: 0, aa: !!o.aa, whistle: false, star: !!o.star });
   const dir = vel.clone().normalize();
   fxMuzzle(from, dir, o.small ? 0.6 : 1.2);
+  if (!o.small && Math.hypot(from.x - camera.position.x, from.z - camera.position.z) < 4000) {
+    const L = 0.6 + LIT() * 0.4, bx = from.x + dir.x * 6, bz = from.z + dir.z * 6;
+    for (let i = 0; i < 18; i++) { const a = rand(TAU), sp = rand(10, 22); fxSpray.emit(bx + Math.cos(a) * 3, 0.4, bz + Math.sin(a) * 3, Math.cos(a) * sp, rand(0.5, 2), Math.sin(a) * sp, rand(0.6, 1.2), 2, 6, L, L, L, 0.35, 2.2, -2); }
+  }
   sfxAt('gun', from.x, from.y, from.z);
   if (owner.player) { PL.shake += 0.35; PL.stats.shells++; }
 }
@@ -2408,6 +2522,7 @@ function updateMissiles(dt) {
   W.missiles = W.missiles.filter(m => !m.dead);
 }
 
+const airTargets = () => (W.helo && !W.helo.dead ? [...W.jets, W.helo] : W.jets);
 function spawnJet(side, kind, x, z, h, target) {
   const j = { isAir: true, side, kind, name: JET_NAME[kind], p: new V3(x, 650, z), h, speed: 235, alt: 650, state: 'in', target, msl: 1, dead: false, t: 0, bank: 0, pitch: 0, vx: 0, vy: 0, vz: 0, heard: false, fireT: 0 };
   j.obj = jetMesh(kind, side); j.obj.rotation.order = 'YZX';
@@ -2529,7 +2644,7 @@ function updateCIWS(s, dt) {
         const d = Math.hypot(m.p.x - s.x, m.p.z - s.z);
         if (d < bd && (m.target === s || d < 900) && inArc(m.p.x, m.p.z)) { bd = d; best = m; }
       }
-      if (!best) for (const j of W.jets) { if (j.side === s.side) continue; const d = j.p.distanceTo(s.pos); if (d < 1500 && d < bd && inArc(j.p.x, j.p.z)) { bd = d; best = j; } }
+      if (!best) for (const j of airTargets()) { if (j.side === s.side) continue; const d = j.p.distanceTo(s.pos); if (d < 1500 && d < bd && inArc(j.p.x, j.p.z)) { bd = d; best = j; } }
       mt.target = best;
     }
     const t = mt.target;
@@ -2565,7 +2680,7 @@ const PL = {
   side: 'ALLIED', ship: null, yaw: 0, pitch: -0.06, zoom: 0, zoomOn: false, fire: false, lock: null, telegraph: 5, rudder: 0,
   asm: 6, sam: 12, asroc: 2, pd: 0, special: 1, chaff: 4, flares: 0, chaffCd: 0, gunCd: 0, shake: 0, dmg: 0, lastHit: -99, salvo: [],
   adMode: 'auto', samCd: 0, pdCd: 0, ecmT: 0, ecmCd: 0, salvoN: 1, lockManual: false, track: false, zoomLevel: 0, zoomF: 1, invertY: false,
-  sys: { gun: 100, radar: 100, launchers: 100, engines: 100, steering: 100 }, dcT: 0, dcCd: 0, dcSys: null, mcamOn: true, mcamM: null, mcamHold: 0,
+  sys: { gun: 100, radar: 100, launchers: 100, engines: 100, steering: 100 }, dcT: 0, dcCd: 0, dcSys: null, heloSorties: 2, heloCd: 0, mcamOn: true, mcamM: null, mcamHold: 0,
   stats: { shells: 0, hits: 0, msl: 0, kills: 0, air: 0, intercepts: 0 }, aimPoint: new V3(), masked: false, aimRay: new THREE.Ray(),
   pointer: false, cursor: { x: 0.5, y: 0.5 }, look: { x: 0, y: 0 }, keys: {}, touch: false, stick: { x: 0, y: 0 }, msg: '',
 };
@@ -2670,7 +2785,7 @@ function aimUpdate() {
   let best = null, ba = 3.6 * DEG * fovK;
   const keep = PL.lock && !PL.lock.dead && !PL.lock.sunk ? 7 * DEG * fovK : 0;
   const consider = (t, p) => {
-    _v.copy(p).sub(o); const dist = _v.length(); if (dist > (sysOK('radar') ? 26000 : 6000) || dist < 30) return;
+    _v.copy(p).sub(o); const dist = _v.length(); if (dist > radarReach() || dist < 30) return;
     const a = _v.normalize().angleTo(d);
     const lim = t === PL.lock ? Math.max(keep, ba) : ba;
     if (a < lim) { if (!best || a < ba || t === PL.lock) { best = t; ba = Math.min(a, ba); } }
@@ -2686,7 +2801,7 @@ function aimUpdate() {
 }
 function cycleTarget(dir = 1) {
   const s = PL.ship; if (!s || state !== 'play') return;
-  const maxR = sysOK('radar') ? 26000 : 6000;
+  const maxR = radarReach();
   const list = [
     ...W.jets.filter(j => hostile(j, s)),
     ...W.ships.filter(t => hostile(t, s) && !t.dead && t.detected),
@@ -2718,7 +2833,9 @@ function playerWeapons(dt) {
     const err = aimTurret(s, i, i === gi ? sol.az : s.h + (s.model.turrets[i].aft ? Math.PI : 0), i === gi ? sol.el : 0.05, dt, 0.9);
     if (i === gi && PL.fire && PL.gunCd <= 0 && err < 0.05 && sysOK('gun')) {
       const m = turretMuzzle(s, i);
-      const v = velFrom(sol.el + rand(-0.0011, 0.0011), sol.az + rand(-0.0014, 0.0014), SHELL_V);
+      // Heavy seas spoil the gun's aim as the ship rolls
+      const sea = 1 + SEA.amp * 0.22 + Math.abs(s.rollS || 0) * 20;
+      const v = velFrom(sol.el + rand(-0.0011, 0.0011) * sea, sol.az + rand(-0.0014, 0.0014) * sea, SHELL_V);
       fireShell(s, m, v, 55, { aa });
       PL.gunCd = 1.05;
     }
@@ -2795,8 +2912,8 @@ function fireSpecialKey() {
     if (!tgts.length) { flashMsg('No surface targets in range'); return; }
     PL.special--;
     const lockShip = PL.lock && !PL.lock.isAir && !PL.lock.isMissile && !PL.lock.isSub ? PL.lock : null;
-    for (let i = 0; i < 4; i++) PL.salvo.push({ t: i * 0.45, target: lockShip && i < 2 ? lockShip : tgts[i % tgts.length], prof: 'hf3' });
-    radio('Weapons', 'Hsiung Feng III salvo, four supersonic birds away.', '');
+    for (let i = 0; i < 4; i++) PL.salvo.push({ t: i * 0.45, target: lockShip && i < 2 ? lockShip : tgts[i % tgts.length], prof: 'harpoon' });
+    radio('Weapons', 'Harpoon salvo, four birds away.', '');
   } else {
     const t = PL.lock && !PL.lock.isAir && !PL.lock.isMissile && !PL.lock.isSub ? PL.lock : null;
     const at = t ? new V3(t.x + t.vx * 6, 0, t.z + t.vz * 6) : PL.aimPoint.clone();
@@ -2830,6 +2947,103 @@ function trackKey() {
   PL.track = !PL.track; flashMsg(PL.track ? `Tracking ${PL.lock.name || 'missile'}` : 'Free look');
 }
 
+/* The ship's helicopter: scouts ahead, listens for submarines with dipping sonar, carries one torpedo. */
+const HELO_NAME = { ALLIED: 'S-70C Seahawk', PLA: 'Z-9C' };
+function heloKey(recall = false) {
+  const s = PL.ship; if (!s || s.dead || state !== 'play') return;
+  const h = W.helo;
+  if (h && !h.dead) {
+    if (recall) { h.state = 'rtb'; radio('Air', `${h.name} returning to mother.`, ''); return; }
+    h.goal = heloGoal(); h.state = 'transit'; h.goalT = PL.lock && !PL.lock.isAir && !PL.lock.isMissile ? PL.lock : null;
+    radio('Air', `${h.name} retasked, bearing ${fmtBrg(bearing(s.x, s.z, h.goal.x, h.goal.z))}.`, '');
+    return;
+  }
+  if (recall) return;
+  if (PL.heloSorties <= 0) { flashMsg('No helicopter sorties left'); return; }
+  if (PL.heloCd > 0) { flashMsg(`Helicopter refuelling, ${Math.ceil(PL.heloCd)}s`); return; }
+  PL.heloSorties--;
+  const S = SPECS[s.cls], hx = S.heli ? S.heli.x : -s.L * 0.27;
+  const m = helicopterMesh(PL.side);
+  const p = new V3(hx, s.P.deckAt(hx) + (S.heli ? 0.5 : 6.5), 0); s.obj.localToWorld(p);
+  W.helo = { isAir: true, side: PL.side, name: HELO_NAME[PL.side], p, h: s.h, speed: 0, vx: 0, vy: 0, vz: 0, state: 'takeoff', t: 0, fuel: 150, torp: 1, goal: heloGoal(), goalT: PL.lock && !PL.lock.isAir && !PL.lock.isMissile ? PL.lock : null, obj: m.group, rotor: m.rotor, tail: m.tail, dead: false, bank: 0, deckX: hx, owner: s };
+  m.group.rotation.order = 'YZX';
+  scene.add(m.group);
+  radio('Air', `${HELO_NAME[PL.side]} launching. Bearing ${fmtBrg(bearing(s.x, s.z, W.helo.goal.x, W.helo.goal.z))}, ${(Math.hypot(W.helo.goal.x - s.x, W.helo.goal.z - s.z) / 1000).toFixed(1)} km.`, '');
+}
+function heloGoal() {
+  const s = PL.ship, t = PL.lock;
+  if (t && !t.isAir && !t.isMissile) return new V3(t.x, 0, t.z);
+  const d = Math.hypot(PL.aimPoint.x - s.x, PL.aimPoint.z - s.z);
+  if (d > 800 && d < 20000) return PL.aimPoint.clone().setY(0);
+  const datum = W.datums.find(dd => !dd.sub.dead);
+  if (datum) return new V3(datum.x, 0, datum.z);
+  return new V3(s.x + fx(s.h) * 6000, 0, s.z + fz(s.h) * 6000);
+}
+function updateHelo(dt) {
+  PL.heloCd -= dt;
+  const h = W.helo; if (!h) return;
+  if (h.dead) { scene.remove(h.obj); W.helo = null; PL.heloCd = 60; return; }
+  const s = PL.ship;
+  h.t += dt;
+  if (h.state !== 'takeoff') h.fuel -= dt;
+  if (h.fuel < 25 && h.state !== 'rtb') { h.state = 'rtb'; radio('Air', `${h.name} bingo fuel, returning.`, ''); }
+  if (h.goalT && !h.goalT.dead) h.goal.set(h.goalT.x, 0, h.goalT.z);
+  let want = h.h, spd = 65, alt = 120;
+  if (h.state === 'takeoff') {
+    if (!s || s.dead) { h.state = 'transit'; }
+    else {
+      const deck = _v.set(h.deckX, s.P.deckAt(h.deckX) + 0.5, 0); s.obj.localToWorld(deck);
+      h.p.set(deck.x, deck.y + Math.min(60, h.t * h.t * 2.5), deck.z); h.h = s.h; spd = s.speed;
+      if (h.t > 5.5) h.state = 'transit';
+    }
+  } else if (h.state === 'transit') {
+    want = bearing(h.p.x, h.p.z, h.goal.x, h.goal.z);
+    if (Math.hypot(h.goal.x - h.p.x, h.goal.z - h.p.z) < 900) { h.state = 'station'; radio('Air', `${h.name} on station. Dipping sonar in the water.`, 'quiet'); }
+  } else if (h.state === 'station') {
+    // Orbit the datum low and slow, listening
+    const a = bearing(h.goal.x, h.goal.z, h.p.x, h.p.z);
+    want = a + Math.PI / 2 + clamp((Math.hypot(h.goal.x - h.p.x, h.goal.z - h.p.z) - 900) / 600, -0.8, 0.8);
+    spd = 42; alt = 55;
+  } else if (h.state === 'rtb') {
+    if (!s || s.dead) { h.dead = true; return; }
+    want = bearing(h.p.x, h.p.z, s.x, s.z);
+    const d = Math.hypot(s.x - h.p.x, s.z - h.p.z);
+    alt = d < 600 ? 30 : 100; spd = d < 600 ? Math.max(s.speed + 4, 20) : 65;
+    if (d < 120) { scene.remove(h.obj); W.helo = null; PL.heloCd = 45; radio('Air', `${h.name} on deck. Refuelling and rearming.`, 'good'); return; }
+  }
+  if (h.state !== 'takeoff') {
+    const dh = clamp(wrapPi(want - h.h), -0.7 * dt, 0.7 * dt);
+    h.h = wrapPi(h.h + dh);
+    h.bank = lerp(h.bank, clamp(dh / Math.max(dt, 1e-3) * 0.8, -0.5, 0.5), clamp(dt * 2, 0, 1));
+    h.speed = lerp(h.speed, spd, clamp(dt * 0.6, 0, 1));
+    h.p.x += fx(h.h) * h.speed * dt; h.p.z += fz(h.h) * h.speed * dt;
+    h.vy = clamp(alt - h.p.y, -8, 8); h.p.y += h.vy * dt;
+  }
+  h.vx = fx(h.h) * h.speed; h.vz = fz(h.h) * h.speed;
+  h.obj.position.copy(h.p);
+  h.obj.rotation.set(h.bank, Math.PI / 2 - h.h, -h.speed * 0.0025);
+  h.rotor.rotation.y += dt * 26; h.tail.rotation.z += dt * 60;
+  // Rotor wash on the water
+  if (h.p.y < 70 && Math.random() < dt * 30) { const a = rand(TAU), r = rand(4, 14), L = 0.5 + LIT() * 0.5; fxSpray.emit(h.p.x + Math.cos(a) * r, 0.4, h.p.z + Math.sin(a) * r, Math.cos(a) * 9, rand(0.5, 2), Math.sin(a) * 9, rand(1, 2), 2, 6, L, L, L, (70 - h.p.y) / 140, 0.8, -1); }
+  if (h.state === 'station' || h.state === 'transit') {
+    for (const sub of W.ships) {
+      if (!sub.isSub || sub.dead || sub.side === PL.side) continue;
+      const d = Math.hypot(sub.x - h.p.x, sub.z - h.p.z);
+      if (d < (h.state === 'station' ? 3800 : 1800)) {
+        if (!sub.detected) radio('Air', `${h.name}: sonar contact, submarine, ${(Math.hypot(sub.x - s.x, sub.z - s.z) / 1000).toFixed(1)} km from us.`, 'good');
+        sub.revealT = Math.max(sub.revealT, 4);
+        if (h.torp > 0 && d < 1300) {
+          h.torp--;
+          fxSplash(h.p.x, h.p.z, 0.6);
+          const at = new V3(sub.x, 0, sub.z);
+          radio('Air', `${h.name}: torpedo away.`, '');
+          W.pending.push({ t: 5, fn: () => { if (!sub.dead && Math.hypot(sub.x - at.x, sub.z - at.z) < 750) { fxSplash(sub.x, sub.z, 3.2); damageShip(sub, 260, null, s, 'torp'); } else radio('Air', 'Torpedo missed.', ''); } });
+        }
+      }
+    }
+  }
+}
+
 /* Ship's systems: hits knock them out, repair parties bring them back. */
 const SYS_NAME = { gun: 'Main gun', radar: 'Radar', launchers: 'Launchers', engines: 'Engines', steering: 'Steering' };
 const SYS_MSG = {
@@ -2837,6 +3051,12 @@ const SYS_MSG = {
   launchers: 'Missile launchers damaged. No missiles until they are repaired!', engines: 'Engine room hit. We are losing speed!', steering: 'Steering gear damaged. The helm is sluggish!',
 };
 const sysOK = k => PL.sys[k] >= 35;
+// Rain clutter shortens radar reach; the hull sonar hears further when the ship slows down.
+const radarReach = () => (sysOK('radar') ? 26000 : 6000) * (1 - SEA.rain * 0.3);
+function sonarRange() {
+  const s = PL.ship; if (!s) return 0;
+  return 2200 + 3600 * Math.pow(1 - clamp(Math.abs(s.speed) / (s.baseMax || s.maxSpeed), 0, 1), 1.4);
+}
 function sysHit(p, amt) {
   const s = PL.ship;
   let k;
@@ -3051,6 +3271,15 @@ function drawOverlay() {
     }
     if (t.isSub) { octx.textAlign = 'center'; octx.fillText('SONAR CONTACT', _sp.x, y1 + 14 * k); }
   }
+  // Our helicopter
+  if (W.helo && !W.helo.dead) {
+    const hh = W.helo; project(hh.p, _sp);
+    if (!_sp.behind) {
+      octx.strokeStyle = octx.fillStyle = COL.friend; octx.globalAlpha = 0.9;
+      octx.beginPath(); octx.arc(_sp.x, _sp.y, 6 * k, 0, TAU); octx.stroke();
+      octx.textAlign = 'center'; octx.fillText(`${hh.name} · ${hh.state === 'station' ? 'on station' : hh.state === 'rtb' ? 'returning' : 'outbound'} · fuel ${Math.max(0, Math.round(hh.fuel))}s`, _sp.x, _sp.y + 18 * k);
+    }
+  }
   // Aircraft and missiles
   for (const j of W.jets) {
     project(j.p, _sp); if (_sp.behind) continue;
@@ -3164,6 +3393,8 @@ function drawRadar() {
     if (t === PL.lock) { rctx.strokeStyle = '#fff'; rctx.strokeRect(x - 7, y - 7, 14, 14); }
   }
   rctx.globalAlpha = 1;
+  if (W.helo) { const [x, y] = P(W.helo.p.x, W.helo.p.z); rctx.strokeStyle = COL.friend; rctx.beginPath(); rctx.arc(x, y, 4, 0, TAU); rctx.stroke(); if (W.helo.state === 'station') { rctx.setLineDash([2, 3]); rctx.beginPath(); rctx.arc(x, y, 3800 * sc, 0, TAU); rctx.stroke(); rctx.setLineDash([]); } }
+  if (W.ships.some(o => o.isSub && !o.dead && o.side !== PL.side)) { rctx.strokeStyle = 'rgba(255,179,71,0.35)'; rctx.setLineDash([4, 4]); rctx.beginPath(); rctx.arc(0, 0, sonarRange() * sc, 0, TAU); rctx.stroke(); rctx.setLineDash([]); }
   for (const j of W.jets) { const [x, y] = P(j.p.x, j.p.z); rctx.fillStyle = j.side === PL.side ? COL.friend : COL.hostile; rctx.beginPath(); rctx.moveTo(x, y - 4); rctx.lineTo(x + 4, y + 3); rctx.lineTo(x - 4, y + 3); rctx.fill(); }
   for (const m of W.missiles) { if (m.kind === 'sam' || m.kind === 'bm') continue; const [x, y] = P(m.p.x, m.p.z); rctx.fillStyle = m.side === PL.side ? '#cfe8ff' : COL.missile; rctx.fillRect(x - 1.5, y - 1.5, 3, 3); }
   for (const tp of W.torps) { const [x, y] = P(tp.p.x, tp.p.z); rctx.fillStyle = tp.side === PL.side ? '#cfe8ff' : COL.missile; rctx.beginPath(); rctx.arc(x, y, 2, 0, TAU); rctx.fill(); }
@@ -3240,7 +3471,8 @@ function updateHud(dt) {
     <div><span>${SPECIAL_NAME[PL.side]} <kbd>Q</kbd></span><b>${PL.special}</b></div>
     <div><span>Chaff <kbd>C</kbd> · Jammer <kbd>J</kbd></span><b>${PL.chaff}${PL.chaffCd > 0 ? ' (' + Math.ceil(PL.chaffCd) + 's)' : ''} · ${ecm}</b></div>
     ${PL.flares || SEA.night ? `<div><span>Star shells <kbd>F</kbd></span><b>${PL.flares}</b></div>` : ''}
-    <div><span>CIWS</span><b>${ciws}</b></div>`;
+    <div><span>CIWS</span><b>${ciws}</b></div>
+    <div><span>Helicopter <kbd>L</kbd></span><b>${W.helo ? `<i class="ok">${W.helo.state === 'station' ? 'On station' : W.helo.state === 'rtb' ? 'Returning' : 'Airborne'}</i> ${Math.max(0, Math.round(W.helo.fuel))}s` : PL.heloCd > 0 ? `Refuel ${Math.ceil(PL.heloCd)}s` : PL.heloSorties > 0 ? `On deck · ${PL.heloSorties}` : 'None left'}</b></div>`;
   if (wp !== lastHud) { $('weapons').innerHTML = wp; lastHud = wp; }
   $('sys').innerHTML = Object.keys(PL.sys).map(k => `<span class="${PL.sys[k] >= 70 ? 'ok' : sysOK(k) ? 'warn' : 'bad'}${PL.dcT > 0 && PL.dcSys === k ? ' fix' : ''}" title="${SYS_NAME[k]} ${Math.round(PL.sys[k])}%">${{ gun: 'GUN', radar: 'RDR', launchers: 'MSL', engines: 'ENG', steering: 'STR' }[k]}</span>`).join('') + `<em>${PL.dcT > 0 ? 'Repairing' : PL.dcCd > 0 ? 'Teams ' + Math.ceil(PL.dcCd) + 's' : 'Repair <kbd>H</kbd>'}</em>`;
   // Air picture: inbound threats with time to impact and how we are engaging them
@@ -3255,11 +3487,13 @@ function updateHud(dt) {
     const mach = o.speed / 340;
     return `<li class="${e.kind === 'msl' && e.tti < 10 && vsUs ? 'crit' : ''}"><b>${name}</b><span>${brg}° ${(e.d / 1000).toFixed(1)}km</span><span>${e.kind === 'msl' ? 'TTI ' + Math.max(0, Math.round(e.tti)) + 's' : 'M' + mach.toFixed(1)}</span><em>${st}${e.kind === 'msl' && !vsUs && e.tgt ? ' · ' + (e.tgt.name || '').split(' ').pop() : ''}</em></li>`;
   }).join('');
+  const subs = W.ships.some(o => o.isSub && !o.dead && o.side !== PL.side);
+  $('radarCap').textContent = `Radar ${radarRange / 1000} km${SEA.rain > 0.5 ? ' · rain clutter' : ''}${subs ? ` · sonar ${(sonarRange() / 1000).toFixed(1)} km` : ''}`;
   $('zoomTxt').textContent = `${PL.zoomF.toFixed(PL.zoomF < 3 ? 1 : 0)}× · mil scale`;
   // Objectives
   $('objList').innerHTML = MS.objs.filter(o => !o.hidden).map(o => `<li class="${o.done ? 'done' : o.failed ? 'failed' : ''}${o.secondary ? ' sec' : ''}"><span></span>${o.text}${o.progress ? ` <em>${o.progress()}</em>` : ''}</li>`).join('');
   const tm = MS.t, rem = MS.limit ? Math.max(0, MS.limit - tm) : null;
-  $('clock').innerHTML = `<b>${rem !== null ? fmtTime(rem) : fmtTime(tm)}</b><span>${rem !== null ? 'Hold until relieved' : MS.def.time + ' local'}</span>`;
+  $('clock').innerHTML = `<b>${rem !== null ? fmtTime(rem) : fmtTime(tm)}</b><span>${rem !== null ? 'Hold until relieved' : MS.timeLabel + ' local'}</span>`;
   // Alerts
   const threats = W.missiles.filter(m => m.side !== PL.side && m.kind === 'asm' && m.target === s);
   const torps = W.torps.filter(t => t.side !== PL.side && t.target === s && !t.decoy);
@@ -3361,7 +3595,7 @@ function aiShip(s, dt) {
         const s2 = solveBallistic(muz, aim, SHELL_V);
         const dmg = C.gun.dmg * (enemy ? D.dmg : 0.9);
         fireShell(s, muz, velFrom(s2.el, s2.az, SHELL_V), dmg, { small: C.small });
-        rec.r = Math.max(enemy ? D.dispMin : 40, rec.r * 0.8);
+        rec.r = Math.max((enemy ? D.dispMin : 40) * (1 + SEA.amp * 0.08), rec.r * 0.8);
       }
     }
   }
@@ -3389,7 +3623,7 @@ function aiAirDefence(s, dt) {
   s.samCd = rand(3.5, 5.5);
   const enemy = s.side !== PL.side;
   let tgt = null, bd = 12000;
-  for (const j of W.jets) { if (j.side === s.side || j.samOn) continue; const d = j.p.distanceTo(s.pos); if (d < bd) { bd = d; tgt = j; } }
+  for (const j of airTargets()) { if (j.side === s.side || j.samOn) continue; const d = j.p.distanceTo(s.pos); if (d < (j === W.helo ? 8000 : 12000) && d < bd) { bd = d; tgt = j; } }
   if (!tgt) {
     bd = 6000;
     for (const m of W.missiles) {
@@ -3410,7 +3644,7 @@ function aiSub(s, dt) {
   s.revealT = Math.max(0, s.revealT - dt);
   const p = PL.ship;
   const wasDetected = s.detected;
-  s.detected = s.revealT > 0 || (p && !p.dead && Math.hypot(p.x - s.x, p.z - s.z) < 4800) || W.ships.some(o => !o.dead && o.side !== s.side && !o.isSub && o !== p && Math.hypot(o.x - s.x, o.z - s.z) < 3000);
+  s.detected = s.revealT > 0 || (p && !p.dead && Math.hypot(p.x - s.x, p.z - s.z) < sonarRange()) || W.ships.some(o => !o.dead && o.side !== s.side && !o.isSub && o !== p && Math.hypot(o.x - s.x, o.z - s.z) < 3000);
   if (s.detected && !wasDetected && s.side !== PL.side) radio('Sonar', `Submarine contact, bearing ${fmtBrg(bearing(p.x, p.z, s.x, s.z))}, ${(Math.hypot(p.x - s.x, p.z - s.z) / 1000).toFixed(1)} km. Classified ${s.C.label}.`, 'bad');
   const t = s.ai.target;
   if (!t || t.dead) return;
@@ -3437,6 +3671,36 @@ const MS = { def: null, idx: 0, t: 0, objs: [], timers: [], over: false, won: fa
 const OTHER = s => (s === 'PLA' ? 'ALLIED' : 'PLA');
 
 const MISSIONS = [
+  {
+    id: 'patrol', endless: true, env: null, time: 'Any', weather: 'Random weather · endless waves',
+    title: { ALLIED: 'Open Patrol', PLA: 'Open Patrol' },
+    place: { ALLIED: 'Taiwan Strait', PLA: 'Taiwan Strait' },
+    brief: {
+      ALLIED: 'An open-ended patrol of the strait in whatever weather the day brings. Enemy groups arrive in waves, each larger than the last, with aircraft and submarines joining later. Between waves you are resupplied and repaired a little. Survive as long as you can.',
+      PLA: 'An open-ended patrol of the strait in whatever weather the day brings. Enemy groups arrive in waves, each larger than the last, with aircraft and submarines joining later. Between waves you are resupplied and repaired a little. Survive as long as you can.',
+    },
+    loadout: { asm: 6, sam: 18, asroc: 4, special: 1, chaff: 4, flares: 6, helo: 3 },
+    setup(A) {
+      A.player(0, 0, A.toward);
+      A.ally('frigate', { x: A.ex(-500), z: 1300, h: A.toward });
+      MS.wave = 0; MS.waveT = 10; MS.score = 0;
+      A.obj({ text: 'Hold the patrol line', need: 1e9, count: () => 0, progress: () => `wave ${MS.wave} · ${MS.score} pts` });
+    },
+    tick(A, dt) {
+      const alive = W.ships.some(s => s.side === A.E && !s.dead) || W.jets.some(j => j.side === A.E);
+      if (MS.waveT > 0) { MS.waveT -= dt; if (MS.waveT <= 0) patrolWave(A, ++MS.wave); return; }
+      if (!alive) {
+        MS.waveT = 20;
+        const s = PL.ship;
+        PL.asm = Math.min(FIXED_ASM[PL.side] || 10, PL.asm + 2); PL.sam = Math.min(30, PL.sam + 6); PL.chaff = Math.min(6, PL.chaff + 1); PL.asroc = Math.min(6, PL.asroc + 1);
+        if (PL.side === 'PLA') PL.pd = Math.min(16, PL.pd + 6);
+        s.hp = Math.min(s.maxHp, s.hp + s.maxHp * 0.15);
+        for (const k in PL.sys) PL.sys[k] = Math.min(100, PL.sys[k] + 30);
+        W.datums = W.datums.filter(d => !d.sub.dead);
+        radio('Fleet', `Wave ${MS.wave} beaten. Replenishment alongside: missiles, decoys and repair crews. Next wave in 20 seconds.`, 'good');
+      }
+    },
+  },
   {
     id: 'median', env: 'dawn', time: '06:12', weather: 'Dawn · light cloud · calm',
     title: { ALLIED: 'Median Line', PLA: 'Median Line' },
@@ -3564,7 +3828,7 @@ const MISSIONS = [
     title: { ALLIED: 'Carrier Strike', PLA: 'Carrier Strike' },
     place: { ALLIED: 'South of the Penghu Islands', PLA: 'Bashi Channel approaches' },
     brief: {
-      ALLIED: 'The carrier Fujian is using a storm front to cover her group\'s run through the strait. Her escorts are a Type 055, a Type 052D and a frigate, and she is launching strike aircraft. Break through and sink the carrier. You have two Hsiung Feng III supersonic salvos.',
+      ALLIED: 'The carrier Fujian is using a storm front to cover her group\'s run through the strait. Her escorts are a Type 055, a Type 052D and a frigate, and she is launching strike aircraft. Break through and sink the carrier. You have six Hsiung Feng III supersonic missiles and two Harpoon salvos.',
       PLA: 'USS George Washington is using a storm front to cover her group\'s run north. Her escorts are destroyers and a frigate, and she is launching strike aircraft. Break through and sink the carrier. You have two DF-21D strikes.',
     },
     loadout: { asm: 10, sam: 24, asroc: 2, special: 2, chaff: 6, flares: 0 },
@@ -3584,6 +3848,22 @@ const MISSIONS = [
   },
 ];
 
+// Open Patrol: endless, escalating waves in random weather.
+const PATROL_ENV = [['dawn', '06:10'], ['morning', '09:30'], ['overcast', '13:00'], ['haze', '16:00'], ['sunset', '18:20'], ['night', '23:30'], ['storm', '18:45']];
+function patrolWave(A, n) {
+  const P0 = PL.ship, center = A.toward;
+  const place = () => { const b = center + rand(-1.1, 1.1), d = rand(10500, 15000); return { x: P0.x + fx(b) * d, z: P0.z + fz(b) * d, h: b + Math.PI }; };
+  const add = (role, k) => { for (let i = 0; i < k; i++) A.enemy(role, { ...place(), tag: 'w' }); };
+  add('frigate', Math.min(4, 1 + Math.floor(n / 2)));
+  if (n >= 2) add('fac', Math.min(4, n - 1));
+  if (n >= 3) add('destroyer', Math.min(3, Math.floor((n - 1) / 2)));
+  if (n >= 6) add('heavy', 1);
+  if (n >= 4 && n % 2 === 0) { const q = place(); const sub = A.enemy('sub', { x: P0.x + (q.x - P0.x) * 0.5, z: P0.z + (q.z - P0.z) * 0.5, h: q.h, tag: 'w' }); W.datums.push({ x: sub.x + rand(-600, 600), z: sub.z + rand(-600, 600), r: 1400, sub }); }
+  if (n >= 2) A.at(MS.t + 35, () => { if (!MS.over) { A.jets(A.E, Math.min(8, 2 + Math.floor(n / 3) * 2)); radio('Air', 'Enemy strike aircraft inbound.', 'bad'); } });
+  radio('CIC', `Wave ${n}: new contacts bearing ${fmtBrg(center)}, 10 to 15 km.`, 'bad');
+  sfx('alarm');
+}
+MISSIONS.push(MISSIONS.shift());
 function missionAPI(def) {
   const P = CFG.side, E = OTHER(P);
   const dir = P === 'ALLIED' ? -1 : 1;
@@ -3600,7 +3880,7 @@ function missionAPI(def) {
     },
     enemy: (role, o) => A.spawn(E, role, { ...o, role: 'combat' }),
     ally: (role, o) => A.spawn(P, role, { ...o, role: 'combat' }),
-    convoy: (role, o) => { const s = A.spawn(P, role, { ...o, role: 'convoy', priority: 1.6 }); s.cruise = o.cruise; s.order = o.cruise; return s; },
+    convoy: (role, o) => { const s = A.spawn(P, role, { ...o, role: 'convoy', priority: 1.3, hpMul: 1.8 }); s.cruise = o.cruise; s.order = o.cruise; return s; },
     protect: (role, o) => { const s = A.spawn(P, role, { ...o, role: 'hvu', priority: 1.8 }); s.cruise = o.cruise; return s; },
     jets(side, n, target) {
       const kinds = JET_KIND[side];
@@ -3634,9 +3914,11 @@ function missionAPI(def) {
 function clearWorld() {
   for (const s of W.ships) removeShip(s);
   for (const j of W.jets) scene.remove(j.obj);
+  if (W.helo) scene.remove(W.helo.obj);
   for (const m of W.missiles) scene.remove(m.obj);
   for (const g of W.islandObjs) { scene.remove(g); g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); }
   for (const k of Object.keys(W)) W[k] = [];
+  W.helo = null;
   [fxSmoke, fxSpray, fxFire, fxSpark].forEach(f => f.clear());
   DEBRIS.list = [];
   for (const L of LIGHTS) { L.t = 0; L.hold = 0; L.l.intensity = 0; }
@@ -3656,12 +3938,16 @@ function startMission(i) {
   const def = MISSIONS[i];
   clearWorld();
   Object.assign(MS, { def, idx: i, t: 0, objs: [], timers: [], over: false, won: false, endT: 0, waypoints: [], limit: 0, kills: {}, spawned: {}, arrived: 0 });
-  applyEnv(def.env);
+  let env = def.env;
+  MS.timeLabel = def.time;
+  if (def.endless) { const e = pick(PATROL_ENV); env = e[0]; MS.timeLabel = e[1]; }
+  applyEnv(env);
   const A = missionAPI(def);
   def.setup(A);
   const lo = def.loadout;
-  PL.asm = lo.asm; PL.sam = lo.sam; PL.asroc = lo.asroc; PL.pd = CFG.side === 'PLA' ? 16 : 0;
+  PL.asm = FIXED_ASM[CFG.side] ?? lo.asm; PL.sam = lo.sam; PL.asroc = lo.asroc; PL.pd = CFG.side === 'PLA' ? 16 : 0;
   PL.special = lo.special; PL.chaff = lo.chaff; PL.flares = lo.flares; PL.chaffCd = 0; PL.gunCd = 0; PL.warned = false; PL.salvo = [];
+  PL.heloSorties = lo.helo ?? 2; PL.heloCd = 0;
   $('missionName').textContent = def.title[CFG.side];
   state = 'play';
   show('hud', true); show('title', false); show('brief', false); show('debrief', false); show('pause', false);
@@ -3672,8 +3958,13 @@ function startMission(i) {
   lockPointer();
 }
 
+const SCORE = { frigate: 100, fac: 60, destroyer: 200, heavy: 300, sub: 250, carrier: 1000 };
 function onShipKilled(s, src) {
   if (s.tag) MS.kills[s.tag] = (MS.kills[s.tag] || 0) + 1;
+  if (MS.def && MS.def.endless && s.side !== PL.side) {
+    const role = Object.keys(ROLES[s.side]).find(r => ROLES[s.side][r].includes(s.cls)) || 'frigate';
+    MS.score += Math.round((SCORE[role] || 100) * (1 + MS.wave * 0.1) * (src && src.player ? 2 : 1));
+  }
   if (state !== 'play') return;
   if (s.player) { radio('Captain', 'Abandon ship! Abandon ship!', 'bad'); endMission(false, `${s.name} was sunk.`); return; }
   if (src && src.player) PL.stats.kills++;
@@ -3682,7 +3973,9 @@ function onShipKilled(s, src) {
 }
 function onJetKilled(j, by) {
   if (state !== 'play') return;
+  if (j === W.helo) { radio('Air', `${j.name} is down! We have lost our helicopter.`, 'bad'); return; }
   if (by && by.player) { PL.stats.air++; PL.stats.kills++; }
+  if (MS.def && MS.def.endless && j.side !== PL.side) MS.score += Math.round(80 * (1 + MS.wave * 0.1) * (by && by.player ? 2 : 1));
   if (j.side !== PL.side) radio('Air', `${j.name} splashed${by && by.player ? ' by our fire' : ''}.`, 'good');
 }
 function onArrived(s) {
@@ -3698,6 +3991,7 @@ function updateMission(dt) {
   }
   MS.t += dt;
   for (const tm of MS.timers) if (!tm.done && MS.t >= tm.t) { tm.done = true; tm.fn(); }
+  if (MS.def.tick) MS.def.tick(missionAPI(MS.def), dt);
   let allPrimary = true;
   for (const o of MS.objs) {
     if (o.final) continue;
@@ -3726,10 +4020,19 @@ function showDebrief() {
   const def = MS.def, s = PL.ship;
   const hp = s ? clamp(s.hp / s.maxHp, 0, 1) : 0;
   const secOK = MS.objs.filter(o => o.secondary).every(o => o.done);
-  const stars = MS.won ? 1 + (hp >= 0.5 ? 1 : 0) + (secOK ? 1 : 0) : 0;
-  if (MS.won) { const p = loadProgress(); const k = CFG.side + ':' + def.id; p[k] = Math.max(p[k] || 0, stars); saveProgress(p); }
-  $('dbTitle').textContent = MS.won ? 'Mission accomplished' : 'Mission failed';
-  $('dbSub').textContent = `${def.title[CFG.side]} · ${MS.reason}`;
+  let stars = MS.won ? 1 + (hp >= 0.5 ? 1 : 0) + (secOK ? 1 : 0) : 0;
+  if (def.endless) {
+    const done = Math.max(0, MS.wave - 1);
+    stars = done >= 10 ? 3 : done >= 6 ? 2 : done >= 3 ? 1 : 0;
+    const p = loadProgress(), k = CFG.side + ':' + def.id;
+    p[k] = Math.max(p[k] || 0, stars); p[k + ':score'] = Math.max(p[k + ':score'] || 0, MS.score); saveProgress(p);
+    $('dbTitle').textContent = 'Patrol over';
+    $('dbSub').textContent = `Survived ${done} wave${done === 1 ? '' : 's'} · ${MS.score} points · best ${p[k + ':score']}`;
+  } else {
+    if (MS.won) { const p = loadProgress(); const k = CFG.side + ':' + def.id; p[k] = Math.max(p[k] || 0, stars); saveProgress(p); }
+    $('dbTitle').textContent = MS.won ? 'Mission accomplished' : 'Mission failed';
+    $('dbSub').textContent = `${def.title[CFG.side]} · ${MS.reason}`;
+  }
   $('dbStars').innerHTML = [0, 1, 2].map(i => `<i class="${i < stars ? 'on' : ''}"></i>`).join('');
   const acc = PL.stats.shells ? Math.round(100 * PL.stats.hits / Math.max(1, PL.stats.shells + PL.stats.msl)) : 0;
   $('dbStats').innerHTML = [
@@ -3737,7 +4040,7 @@ function showDebrief() {
     ['Shells fired', PL.stats.shells], ['Missiles fired', PL.stats.msl], ['Hits', PL.stats.hits],
   ].map(([a, b]) => `<div><dt>${a}</dt><dd>${b}</dd></div>`).join('');
   $('dbObj').innerHTML = MS.objs.map(o => `<li class="${o.done ? 'done' : 'failed'}${o.secondary ? ' sec' : ''}"><span></span>${o.text}</li>`).join('');
-  $('dbNext').hidden = !MS.won || MS.idx >= MISSIONS.length - 1;
+  $('dbNext').hidden = !MS.won || MS.idx >= MISSIONS.length - 1 || !!def.endless || !!(MISSIONS[MS.idx + 1] || {}).endless;
   show('hud', false); show('touch', false); show('debrief', true);
   void acc;
 }
@@ -3785,7 +4088,7 @@ function updateWorld(dt, playing) {
   }
   W.ships = W.ships.filter(s => !s.sunk);
   if (playing) { updatePlayerCamera(dt); aimUpdate(); playerWeapons(dt); }
-  updateJets(dt); updateMissiles(dt); updateTorps(dt); updateShells(dt);
+  updateJets(dt); if (playing) updateHelo(dt); updateMissiles(dt); updateTorps(dt); updateShells(dt);
   for (const p of W.pending) {
     if (p.fall) {
       p.life -= dt; p.v.y -= 9.8 * dt; p.p.addScaledVector(p.v, dt);
@@ -3901,7 +4204,8 @@ window.addEventListener('keydown', e => {
     else if (e.code === 'KeyQ') fireSpecialKey();
     else if (e.code === 'KeyC') chaffKey();
     else if (e.code === 'KeyF') starShellKey();
-    else if (e.code === 'KeyR') { radarRange = radarRange === 12000 ? 24000 : radarRange === 24000 ? 6000 : 12000; $('radarCap').textContent = `Radar ${radarRange / 1000} km · head up`; }
+    else if (e.code === 'KeyR') radarRange = radarRange === 12000 ? 24000 : radarRange === 24000 ? 6000 : 12000;
+    else if (e.code === 'KeyL') heloKey(e.shiftKey);
     else if (e.code === 'KeyZ') PL.zoomOn = !PL.zoomOn;
     else if (e.code === 'KeyG') adModeKey();
     else if (e.code === 'KeyJ') ecmKey();
@@ -4023,8 +4327,8 @@ function renderMissionList() {
   $('missionList').innerHTML = MISSIONS.map((m, i) => {
     const st = prog[CFG.side + ':' + m.id] || 0;
     return `<button class="mcard" type="button" data-i="${i}">
-      <span class="mnum">${String(i + 1).padStart(2, '0')}</span>
-      <span class="mbody"><strong>${m.title[CFG.side]}</strong><span>${m.place[CFG.side]}</span><em>${m.time} · ${m.weather}</em></span>
+      <span class="mnum">${m.endless ? '∞' : String(i + 1).padStart(2, '0')}</span>
+      <span class="mbody"><strong>${m.title[CFG.side]}</strong><span>${m.place[CFG.side]}${m.endless && prog[CFG.side + ':' + m.id + ':score'] ? ` · best ${prog[CFG.side + ':' + m.id + ':score']} points` : ''}</span><em>${m.endless ? m.weather : `${m.time} · ${m.weather}`}</em></span>
       <span class="mstars" aria-label="${st} of 3 stars">${[0, 1, 2].map(k => `<i class="${k < st ? 'on' : ''}"></i>`).join('')}</span>
     </button>`;
   }).join('');
@@ -4033,14 +4337,14 @@ function openBrief(i) {
   const m = MISSIONS[i];
   state = 'brief';
   MS.idx = i;
-  $('bNum').textContent = `Mission ${String(i + 1).padStart(2, '0')} of ${MISSIONS.length}`;
+  $('bNum').textContent = m.endless ? 'Endless mode' : `Mission ${String(i + 1).padStart(2, '0')} of ${MISSIONS.length - 1}`;
   $('bTitle').textContent = m.title[CFG.side];
-  $('bMeta').textContent = `${m.place[CFG.side]} · ${m.time} local · ${m.weather}`;
+  $('bMeta').textContent = m.endless ? `${m.place[CFG.side]} · ${m.weather}` : `${m.place[CFG.side]} · ${m.time} local · ${m.weather}`;
   $('bText').textContent = m.brief[CFG.side];
   const ps = PLAYER_SHIP[CFG.side];
   const lo = m.loadout;
   $('bShip').textContent = `${ps.name} (${ps.no}), ${CLASS[ps.cls].label}`;
-  $('bLoad').textContent = `${lo.asm} ${ASM[PLAYER_ASM[CFG.side]].name} · ${lo.sam} ${SAM_NAME[CFG.side]}${CFG.side === 'PLA' ? ' · 16 HQ-10' : ''}${lo.asroc ? ` · ${lo.asroc} ASROC` : ''} · ${lo.special} ${SPECIAL_NAME[CFG.side]}${lo.special > 1 ? 's' : ''} · ${lo.chaff} decoy loads · jammer${lo.flares ? ` · ${lo.flares} star shells` : ''}`;
+  $('bLoad').textContent = `${FIXED_ASM[CFG.side] ?? lo.asm} ${ASM[PLAYER_ASM[CFG.side]].name} · ${lo.sam} ${SAM_NAME[CFG.side]}${CFG.side === 'PLA' ? ' · 16 HQ-10' : ''}${lo.asroc ? ` · ${lo.asroc} ASROC` : ''} · ${lo.special} ${SPECIAL_NAME[CFG.side]}${lo.special > 1 ? 's' : ''} · ${lo.chaff} decoy loads · jammer · ${lo.helo ?? 2} helicopter sorties${lo.flares ? ` · ${lo.flares} star shells` : ''}`;
   show('title', false); show('debrief', false); show('pause', false); show('brief', true);
   $('bBegin').focus();
 }
@@ -4120,6 +4424,7 @@ function simulate(seconds, auto = true) {
       if (W.missiles.some(m => m.target === s) && Math.random() < dt / 4) chaffKey();
       if (W.missiles.some(m => m.target === s && m.p.distanceTo(s.pos) < 9000) && PL.ecmCd <= 0) ecmKey();
       if (Object.values(PL.sys).some(v => v < 50) && PL.dcCd <= 0) damageControlKey();
+      if (!W.helo && W.datums.some(d => !d.sub.dead) && PL.heloCd <= 0 && PL.heloSorties > 0) heloKey();
       const mp = MS.waypoints[0] || (!W.ships.some(o => o.isSub && o.detected && !o.dead) && W.datums.find(d => !d.sub.dead));
       if (mp) { const b = wrapPi(bearing(s.x, s.z, mp.x, mp.z) - s.h); PL.rudder = clamp(b, -1, 1) * (Math.hypot(mp.x - s.x, mp.z - s.z) > 2500 ? 1 : 0); }
     }
