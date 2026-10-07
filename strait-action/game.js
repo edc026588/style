@@ -2043,7 +2043,8 @@ function sfxAt(kind, x, y, z, size = 1) {
   // Rocket motors are loud: launches carry much further than splashes and small guns
   const vol = clamp(1 / (1 + d / (kind === 'launch' ? 2200 : 700)), 0, 1);
   if (vol < 0.02) return;
-  const delay = Math.min(d / 343, 4);
+  // Sound travels at 343 m/s, so distant guns boom after their flash. Launches play at once: a late roar reads as lag.
+  const delay = kind === 'launch' ? 0 : Math.min(d / 343, 4);
   sfx(kind, vol, delay, size, d);
 }
 function sfx(kind, vol = 1, delay = 0, size = 1, dist = 0) {
