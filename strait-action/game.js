@@ -80,10 +80,12 @@ const GradeShader = {
     tDiffuse: { value: null }, time: { value: 0 }, res: { value: new THREE.Vector2(1, 1) },
     scope: { value: 0 }, damage: { value: 0 }, flash: { value: 0 }, grain: { value: 0.03 },
     vignette: { value: 0.95 }, aberr: { value: 0.006 }, night: { value: 0 }, wet: { value: 0 },
+    sunPos: { value: new THREE.Vector2(0.5, 0.5) }, sunVis: { value: 0 }, sunCol: { value: new THREE.Color(1, 0.9, 0.7) },
   },
   vertexShader: /* glsl */`varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse; uniform float time, scope, damage, flash, grain, vignette, aberr, night, wet; uniform vec2 res;
+    uniform vec2 sunPos; uniform float sunVis; uniform vec3 sunCol;
     varying vec2 vUv;
     float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
@@ -100,6 +102,24 @@ const GradeShader = {
       vec2 off = c * r2 * aberr * 4.0;
       vec3 col = vec3(texture2D(tDiffuse, uv + off).r, texture2D(tDiffuse, uv).g, texture2D(tDiffuse, uv - off).b);
       vec2 p = c * vec2(res.x / res.y, 1.0);
+      // Sun glare: bloom halo, anamorphic streak and faint lens ghosts
+      if (sunVis > 0.001) {
+        vec2 dv = (vUv - sunPos) * vec2(res.x / res.y, 1.0);
+        float dd = length(dv);
+        vec3 gl = sunCol * (0.22 * exp(-dd * 22.0) + 0.025 * exp(-dd * 5.0));
+        gl += sunCol * 0.07 * exp(-abs(dv.y) * 160.0) * exp(-abs(dv.x) * 2.6);
+        vec2 axis = vec2(0.5) - sunPos;
+        for (int i = 1; i <= 3; i++) {
+          vec2 gp = sunPos + axis * (0.55 * float(i));
+          float gd = length((vUv - gp) * vec2(res.x / res.y, 1.0));
+          gl += sunCol * vec3(0.5, 0.8, 1.0) * 0.025 * smoothstep(0.05 + 0.025 * float(i), 0.0, gd);
+        }
+        col += gl * sunVis;
+      }
+      // Gentle filmic contrast and saturation
+      col = mix(col, col * col * (3.0 - 2.0 * col), 0.16);
+      float lg = dot(col, vec3(0.299, 0.587, 0.114));
+      col = max(mix(vec3(lg), col, 1.07), 0.0);
       float vig = smoothstep(1.15, 0.2, length(p) * vignette);
       col *= mix(0.5, 1.0, vig);
       float lum = dot(col, vec3(0.299, 0.587, 0.114));
@@ -315,6 +335,7 @@ water.material.fragmentShader = water.material.fragmentShader
   U.swA = { value: SWELL.map(c => new THREE.Vector4(c.dx, c.dz, c.k, c.a)) };
   U.swW = { value: SWELL.map(c => c.w) };
   U.swT = { value: 0 };
+  U.swAmp = { value: 0.4 }; U.foamAmt = { value: 0 }; U.foamLight = { value: 1 };
   const decl = 'uniform vec4 swA[5]; uniform float swW[5]; uniform float swT;\n';
   const fn = 'float swellH(vec2 p){ float h = 0.0; for (int i = 0; i < 5; i++) h += swA[i].w * sin(dot(swA[i].xy, p) * swA[i].z - swW[i] * swT + float(i) * 1.7); return h; }\n';
   water.material.vertexShader = water.material.vertexShader
@@ -324,7 +345,18 @@ water.material.fragmentShader = water.material.fragmentShader
     .replace('vec4 mvPosition =  modelViewMatrix * vec4( position, 1.0 );', 'vec4 mvPosition = modelViewMatrix * vec4( pos, 1.0 );');
   water.material.fragmentShader = water.material.fragmentShader
     .replace('uniform mat4 textureMatrix;', 'uniform mat4 textureMatrix;')
-    .replace('uniform sampler2D mirrorSampler;', decl + 'uniform sampler2D mirrorSampler;')
+    .replace('uniform sampler2D mirrorSampler;', decl + 'uniform float swAmp; uniform float foamAmt; uniform float foamLight;\nuniform sampler2D mirrorSampler;')
+    .replace('void main() {', fn + 'void main() {')
+    .replace('vec3 outgoingLight = albedo;',
+      'float dist2 = length(worldPosition.xz - eye.xz);\n' +
+      ' float hgt = swellH(worldPosition.xz);\n' +
+      ' float crest = smoothstep(swAmp * 0.5, swAmp * 1.15, hgt + noise.x * swAmp * 1.6);\n' +
+      ' float foam = crest * foamAmt * (1.0 - smoothstep(500.0, 3500.0, dist2));\n' +
+      ' float back = pow(max(dot(normalize(vec3(-eyeDirection.x, 0.0, -eyeDirection.z)), normalize(vec3(sunDirection.x, 0.0, sunDirection.z))), 0.0), 2.0);\n' +
+      ' float ss = back * smoothstep(-swAmp * 0.2, swAmp, hgt) * (1.0 - smoothstep(800.0, 4000.0, dist2));\n' +
+      ' albedo += vec3(0.01, 0.09, 0.075) * sunColor * ss * foamLight;\n' +
+      ' albedo = mix(albedo, vec3(0.7, 0.74, 0.76) * foamLight, clamp(foam, 0.0, 0.85));\n' +
+      ' vec3 outgoingLight = albedo;')
     .replace('vec3 surfaceNormal = normalize( noise.xzy * vec3( 1.5, 1.0, 1.5 ) );',
       'vec3 surfaceNormal = normalize( noise.xzy * vec3( 1.5, 1.0, 1.5 ) );\n' +
       ' vec2 sg = vec2(0.0); for (int i = 0; i < 5; i++) { sg += swA[i].w * swA[i].z * swA[i].xy * cos(dot(swA[i].xy, worldPosition.xz) * swA[i].z - swW[i] * swT + float(i) * 1.7); }\n' +
@@ -429,6 +461,9 @@ function applyEnv(name) {
   WATER.waterColor.value.set(E.water);
   WATER.distortionScale.value = E.dist * 0.28;
   swellAmp = 0.11 * Math.pow(E.sea, 1.4);
+  WATER.swAmp.value = swellAmp * 0.75;
+  WATER.foamAmt.value = 0.08 + smooth(2, 6, E.sea) * 0.85;
+  WATER.foamLight.value = E.night ? 0.12 : 0.3 + E.light * 0.7;
   WATER.size.value = 2.2 + E.sea * 0.15;
 
   sun.color.copy(sunC);
@@ -682,6 +717,72 @@ function noiseTex() {
   }, { repeat: true });
 }
 
+function flagTex(nation) {
+  return canvasTex(192, 128, (g, w, h) => {
+    if (nation === 'ROC') {
+      g.fillStyle = '#c8102e'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#0a2b8c'; g.fillRect(0, 0, w / 2, h / 2);
+      g.fillStyle = '#ffffff';
+      const cx = w / 4, cy = h / 4;
+      g.beginPath();
+      for (let i = 0; i < 24; i++) { const a = i / 24 * TAU - Math.PI / 2, r = i % 2 ? 11 : 22; g.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); }
+      g.fill();
+      g.fillStyle = '#0a2b8c'; g.beginPath(); g.arc(cx, cy, 10, 0, TAU); g.fill();
+      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(cx, cy, 8.5, 0, TAU); g.fill();
+    } else if (nation === 'PRC') {
+      g.fillStyle = '#de2910'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#ffde00';
+      const star = (x, y, r, rot) => { g.beginPath(); for (let i = 0; i < 10; i++) { const a = rot + i / 10 * TAU - Math.PI / 2, rr = i % 2 ? r * 0.38 : r; g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); } g.fill(); };
+      star(w / 6, h / 4, 19, 0);
+      [[w / 3, h / 10], [w * 0.4, h / 5], [w * 0.4, h * 0.35], [w / 3, h * 0.45]].forEach(([x, y]) => star(x, y, 6.5, 0.4));
+    } else if (nation === 'US') {
+      for (let i = 0; i < 13; i++) { g.fillStyle = i % 2 ? '#ffffff' : '#b22234'; g.fillRect(0, i * h / 13, w, h / 13 + 1); }
+      g.fillStyle = '#3c3b6e'; g.fillRect(0, 0, w * 0.4, h * 7 / 13);
+      g.fillStyle = '#ffffff';
+      for (let r = 0; r < 9; r++) for (let c = 0; c < (r % 2 ? 5 : 6); c++) { g.beginPath(); g.arc(6 + c * 12.5 + (r % 2 ? 6 : 0), 5 + r * 7.2, 1.6, 0, TAU); g.fill(); }
+    } else {
+      g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#bc002d'; g.beginPath(); g.arc(w / 2, h / 2, h * 0.3, 0, TAU); g.fill();
+    }
+  });
+}
+// The flag hoists at x = 0 and streams aft; a vertex shader makes it ripple.
+const FLAG_GEO = new THREE.PlaneGeometry(3.6, 2.4, 14, 6).translate(-1.8, 0, 0);
+const FLAG_T = { value: 0 };
+const FLAG_MATS = {};
+function flagMat(nation) {
+  if (!FLAG_MATS[nation]) {
+    const m = new THREE.MeshStandardMaterial({ map: flagTex(nation), side: THREE.DoubleSide, roughness: 0.85 });
+    m.onBeforeCompile = sh => {
+      sh.uniforms.flagT = FLAG_T;
+      sh.vertexShader = 'uniform float flagT;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+        '#include <begin_vertex>\nfloat fk = -position.x / 3.6;\ntransformed.z += (sin(position.x * 1.9 + flagT * 7.0) * 0.22 + sin(position.x * 3.7 + flagT * 11.0) * 0.08) * fk;\ntransformed.y -= fk * fk * 0.25;');
+    };
+    FLAG_MATS[nation] = m;
+  }
+  return FLAG_MATS[nation];
+}
+// Height field of welded hull plates and frames, turned into a normal map.
+function plateNormalTex() {
+  const S = 512, hgt = new Float32Array(S * S);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const px = x % 64, py = y % 96;
+    const seam = Math.min(px, 64 - px, py, 96 - py);
+    const groove = -0.9 * Math.exp(-seam * seam / 3);
+    const bulge = 0.35 * Math.sin(Math.PI * px / 64) * Math.sin(Math.PI * py / 96);
+    hgt[y * S + x] = groove + bulge + (fbm(x / 9, y / 9, 41, 3) - 0.5) * 0.25;
+  }
+  return canvasTex(S, S, (g) => {
+    const img = g.createImageData(S, S), d = img.data;
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const hx = hgt[y * S + (x + 1) % S] - hgt[y * S + (x + S - 1) % S];
+      const hy = hgt[((y + 1) % S) * S + x] - hgt[((y + S - 1) % S) * S + x];
+      let nx = -hx * 1.2, ny = hy * 1.2, nz = 1; const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
+      const i = (y * S + x) * 4; d[i] = (nx * 0.5 + 0.5) * 255; d[i + 1] = (ny * 0.5 + 0.5) * 255; d[i + 2] = (nz * 0.5 + 0.5) * 255; d[i + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+  }, { srgb: false, repeat: true });
+}
 const TEX = {};
 function makeTextures() {
   setSeed(11);
@@ -691,7 +792,7 @@ function makeTextures() {
   TEX.cv = { '73': carrierDeckTex('73'), '18': carrierDeckTex('18') };
   TEX.smoke = puffTex(); TEX.spray = sprayTex(); TEX.fire = fireTex(); TEX.flash = flashTex();
   TEX.dot = radialTex([[0, 'rgba(255,255,255,1)'], [0.25, 'rgba(255,255,255,0.7)'], [1, 'rgba(255,255,255,0)']], 64);
-  TEX.foam = foamTex(false); TEX.kelvin = foamTex(true); TEX.noise = noiseTex();
+  TEX.foam = foamTex(false); TEX.kelvin = foamTex(true); TEX.noise = noiseTex(); TEX.plates = plateNormalTex();
 }
 
 
@@ -705,7 +806,8 @@ function makeMaterials() {
   for (const k of ['light', 'mid', 'dark', 'black', 'navy']) {
     const sup = stdMat({ map: TEX.sup[k], roughness: 0.55, metalness: 0.25 });
     sup.userData.tri = 12;
-    PAINT[k] = { hull: stdMat({ map: TEX.hull[k], roughness: 0.6, metalness: 0.3, side: THREE.DoubleSide }), sup };
+    PAINT[k] = { hull: stdMat({ map: TEX.hull[k], normalMap: TEX.plates, normalScale: new THREE.Vector2(0.55, 0.55), roughness: 0.6, metalness: 0.3, side: THREE.DoubleSide }), sup };
+    sup.normalMap = TEX.plates; sup.normalScale = new THREE.Vector2(0.3, 0.3);
   }
   MAT.deck = stdMat({ map: TEX.deck, roughness: 0.9, metalness: 0.1, side: THREE.DoubleSide });
   MAT.dark = stdMat({ color: 0x2b2f32, roughness: 0.6, metalness: 0.45 });
@@ -1459,6 +1561,32 @@ class FX {
   clear() { this.n = 0; this.geo.instanceCount = 0; }
 }
 let fxSmoke, fxSpray, fxFire, fxSpark;
+const DEBRIS = { mesh: null, list: [], m: new THREE.Matrix4(), q: new THREE.Quaternion(), e: new THREE.Euler() };
+function makeDebris() {
+  DEBRIS.mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), stdMat({ color: 0x2a2c2e, roughness: 0.8, metalness: 0.4 }), 400);
+  DEBRIS.mesh.count = 0; DEBRIS.mesh.frustumCulled = false; DEBRIS.mesh.castShadow = true;
+  scene.add(DEBRIS.mesh);
+}
+function fxDebris(x, y, z, n, size = 1) {
+  for (let i = 0; i < n && DEBRIS.list.length < 400; i++) {
+    const a = rand(TAU), e = rand(0.3, 1.3), sp = rand(10, 40) * Math.sqrt(size);
+    DEBRIS.list.push({ p: new V3(x, y, z), v: new V3(Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp, Math.sin(a) * Math.cos(e) * sp), r: new V3(rand(TAU), rand(TAU), rand(TAU)), rv: new V3(rand(-8, 8), rand(-8, 8), rand(-8, 8)), s: new V3(rand(0.3, 1.6), rand(0.1, 0.5), rand(0.3, 1.2)).multiplyScalar(size), smoke: Math.random() < 0.4 });
+  }
+}
+function updateDebris(dt) {
+  if (!DEBRIS.mesh) return;
+  let k = 0;
+  for (const d of DEBRIS.list) {
+    d.v.y -= 9.8 * dt; d.p.addScaledVector(d.v, dt); d.r.addScaledVector(d.rv, dt);
+    if (d.smoke && Math.random() < dt * 14) { const L = 0.1 + LIT() * 0.15; fxSmoke.emit(d.p.x, d.p.y, d.p.z, 0, 0.5, 0, rand(1.5, 3), 0.8, 4, L, L, L, 0.7, 0.4, 0.2); }
+    if (d.p.y < 0) { d.dead = true; if (Math.random() < 0.5) fxSpray.emit(d.p.x, 0.3, d.p.z, 0, 4, 0, 1.2, 1, 3, 0.8, 0.8, 0.8, 0.6, 0.3, -9.8); continue; }
+    DEBRIS.m.compose(d.p, DEBRIS.q.setFromEuler(DEBRIS.e.set(d.r.x, d.r.y, d.r.z)), d.s);
+    DEBRIS.mesh.setMatrixAt(k++, DEBRIS.m);
+  }
+  DEBRIS.list = DEBRIS.list.filter(d => !d.dead);
+  DEBRIS.mesh.count = k;
+  DEBRIS.mesh.instanceMatrix.needsUpdate = true;
+}
 const WIND = new V3(3, 0, 1.5);
 function makeFX() {
   fxSmoke = new FX(7000, TEX.smoke, false, 2);
@@ -1499,6 +1627,7 @@ function fxExplosion(x, y, z, size = 1, smokeMul = 1) {
     fxSpark.emit(x, y, z, Math.cos(a) * Math.cos(e) * s, Math.sin(e) * s, Math.sin(a) * Math.cos(e) * s, rand(0.6, 1.8), 0.7, 0.3, 6, 3.2, 1.2, 1, 0.3, -9.8, 0.6);
   }
   flashLight(x, y + 4, z, 0xffa055, 2.5e6 * size, 0.5);
+  if (size >= 0.5 && Math.hypot(x - camera.position.x, z - camera.position.z) < 9000) fxDebris(x, y, z, Math.round(6 * size), Math.min(size, 2));
   sfxAt('boom', x, y, z, size);
 }
 function fxMuzzle(pos, dir, size = 1) {
@@ -1757,6 +1886,23 @@ const NAMES = {
   cargoALLIED: [['MV Ever Harmony', ''], ['MV Yang Ming Unity', ''], ['MV Wan Hai 316', '']],
   cargoPLA: [['MV COSCO Xiamen', ''], ['MV Zhonggu Fujian', ''], ['MV Min Hai 7', '']],
 };
+/* Anti-ship missiles: cruise speed, terminal sprint and sea-skimming height (m/s, m). */
+const ASM = {
+  harpoon: { name: 'Harpoon', cruise: 240, alt: 5, dmg: 260, weave: 1 },
+  type17: { name: 'Type 17 SSM', cruise: 250, alt: 5, dmg: 260, weave: 1 },
+  hf2: { name: 'Hsiung Feng II', cruise: 250, alt: 8, dmg: 230 },
+  hf3: { name: 'Hsiung Feng III', cruise: 640, alt: 14, dmg: 300 },
+  yj83: { name: 'YJ-83', cruise: 270, sprint: 430, sprintAt: 6000, alt: 7, dmg: 240 },
+  yj18: { name: 'YJ-18', cruise: 260, sprint: 780, sprintAt: 9000, alt: 6, dmg: 300, weave: 1 },
+  yj83k: { name: 'YJ-83K', cruise: 280, sprint: 430, sprintAt: 6000, alt: 7, dmg: 230 },
+  agm84: { name: 'AGM-84 Harpoon', cruise: 250, alt: 5, dmg: 230, weave: 1 },
+};
+const ASM_TYPE = { kidd: 'harpoon', burke: 'harpoon', mogami: 'type17', chengkung: 'hf3', kh6: 'hf2', t055: 'yj18', t052d: 'yj18', t054a: 'yj83', t022: 'yj83' };
+const JET_ASM = { ALLIED: 'agm84', PLA: 'yj83k' };
+const PLAYER_ASM = { ALLIED: 'harpoon', PLA: 'yj18' };
+const SPECIAL_NAME = { ALLIED: 'HF-3 salvo', PLA: 'DF-21D strike' };
+const SAM_NAME = { ALLIED: 'SM-2', PLA: 'HHQ-9' };
+const NATION = { kidd: 'ROC', chengkung: 'ROC', kh6: 'ROC', haikun: 'ROC', panshih: 'ROC', burke: 'US', nimitz: 'US', mogami: 'JP' };
 const PLAYER_SHIP = { ALLIED: { cls: 'kidd', name: 'ROCS Kee Lung', no: '1801', jets: 'f16' }, PLA: { cls: 't055', name: 'Nanchang', no: '101', jets: 'j20' } };
 const JET_KIND = { ALLIED: ['f16', 'f35', 'f18'], PLA: ['flanker', 'j20', 'flanker'] };
 const JET_NAME = { f16: 'F-16V', f35: 'F-35B', f18: 'F/A-18F', flanker: 'J-15', j20: 'J-20' };
@@ -1774,7 +1920,7 @@ function nextName(cls, side) {
 
 /* Model cache: each class is built once and cloned. */
 const PROTO = {};
-function modelFor(cls, no, player = false) {
+function modelFor(cls, no, player = false, side = 'PLA') {
   const C = CLASS[cls];
   const build = () => {
     if (C.model === 'war') return buildWarship(cls, { player });
@@ -1805,7 +1951,16 @@ function modelFor(cls, no, player = false) {
   // Funnel tops and CIWS mounts in ship coordinates, for exhaust and tracer origins
   const S = SPECS[cls];
   m.funnels = S ? (S.funnels || []).map(f => new V3(f.x, m.P.deckAt(f.x) + (f.y || 0) + f.h + 0.6, f.z || 0)) : C.model === 'cargo' ? [new V3(-64, m.P.deckAt(-64) + 23.5, 0)] : [];
-  m.ciwsPts = S ? (S.ciws || []).map(c => new V3(c.x, m.P.deckAt(c.x) + c.y + 1.8, c.z)) : [new V3(0, m.top * 0.6, 0)];
+  m.ciwsPts = S ? (S.ciws || []).map(c => Object.assign(new V3(c.x, m.P.deckAt(c.x) + c.y + 1.8, c.z), { type: c.type }))
+    : C.model === 'cv' ? [[130, -24], [-140, -30], [-150, 24]].map(([x, z]) => Object.assign(new V3(x, 19.5, z), { type: 'gun' })) : [new V3(0, m.top * 0.6, 0)];
+  // National ensign on a stern flagstaff
+  if (C.model !== 'sub') {
+    const nation = NATION[cls] || (side === 'ALLIED' ? 'ROC' : 'PRC');
+    const x = -m.L / 2 + (C.model === 'cv' ? 10 : 2.5), y = C.model === 'cv' ? 20 : m.P.deckAt(x);
+    const pole = new THREE.Mesh(cyl(0.06, 0.09, 6.5, 6), MAT.metal); pole.position.set(x, y + 3.25, 0);
+    const flag = new THREE.Mesh(FLAG_GEO, flagMat(nation)); flag.position.set(x, y + 5.4, 0);
+    m.group.add(pole, flag);
+  }
   return m;
 }
 
@@ -1834,7 +1989,7 @@ class Ship {
     const nm = o.name ? [o.name, o.no ?? ''] : nextName(cls, side);
     this.name = nm[0]; this.no = nm[1];
     this.player = !!o.player;
-    const m = modelFor(cls, this.no, this.player);
+    const m = modelFor(cls, this.no, this.player, side);
     this.model = m; this.obj = m.group; this.obj.rotation.order = 'YZX';
     scene.add(this.obj);
     this.L = m.L; this.B = m.B; this.top = m.top; this.P = m.P;
@@ -1986,6 +2141,13 @@ function sinkStep(s, dt) {
   }
   if (s.wake) s.wake.update(dt, s.x, s.z, s.h, s.speed, s.L * 0.47);
   shipEffects(s, dt);
+  // Burning fuel spreading on the water
+  if (s.deadT < 45 && Math.random() < dt * 12) {
+    const r = s.L * (0.3 + s.deadT * 0.012), a = rand(TAU);
+    const ox = s.x + Math.cos(a) * rand(0, r), oz = s.z + Math.sin(a) * rand(0, r) * 0.5;
+    fxFire.emit(ox, 0.8, oz, 0, rand(1, 3), 0, rand(0.8, 1.6), rand(3, 5), rand(6, 10), 3.5, 1.5, 0.5, 0.75, 0.5, 1, 0.8);
+    if (Math.random() < 0.35) { const L = 0.05 * (0.4 + LIT() * 0.6); fxSmoke.emit(ox, 3, oz, 0, rand(4, 7), 0, rand(12, 20), 6, rand(40, 70), L, L, L, 0.85, 0.1, 0.5); }
+  }
   if (s.sinkY > s.top + s.P.D + 10 || s.deadT > 70) {
     s.sunk = true;
     const L = 0.4 + LIT() * 0.6;
@@ -2136,7 +2298,10 @@ function launchMissile(kind, owner, from, dir, target, o = {}) {
     speed: o.speed0 ?? (kind === 'sam' ? 90 : 35), max: o.max ?? { asm: 270, sam: 820, asroc: 300, bm: 1700 }[kind],
     t: 0, life: { asm: 110, sam: 16, asroc: 45, bm: 30 }[kind], boost: o.boost ?? (kind === 'asm' ? 1.5 : 0.5),
     dmg: o.dmg ?? 0, pk: o.pk ?? 0.7, alt: rand(6, 11), decoy: null, aim: o.aim ? o.aim.clone() : null, trail: 0, dead: false, vx: 0, vy: 0, vz: 0,
+    prof: o.prof ? ASM[o.prof] : null, ph: rand(TAU), lost: false, pd: !!o.pd,
   };
+  if (m.prof) { m.max = m.prof.cruise; m.alt = m.prof.alt + rand(-1, 1.5); if (!o.dmg) m.dmg = m.prof.dmg; }
+  if (m.pd) { m.max = 1000; m.life = 7; }
   m.obj = missileMesh();
   if (kind === 'sam') m.obj.scale.setScalar(0.8);
   if (kind === 'bm') m.obj.scale.setScalar(2.2);
@@ -2154,7 +2319,8 @@ function killMissile(m, by) {
   if (m.dead) return;
   m.dead = true;
   fxExplosion(m.p.x, m.p.y, m.p.z, 0.35, 0.5);
-  if (by && by.player && m.side !== PL.side) { PL.stats.intercepts++; }
+  if (by && by.player && m.side !== PL.side) { PL.stats.intercepts++; if (m.prof) radio('Weapons', `Splash one ${m.prof.name}.`, 'good'); }
+  else if (m.owner && m.owner.player && by && !by.player) radio('Weapons', `Our ${m.prof ? m.prof.name : 'missile'} was shot down by ${by.name || 'enemy defences'}.`, 'bad');
 }
 function dropMissile(m) { scene.remove(m.obj); if (m.target && m.target.inbound) m.target.inbound--; if (m.onDone) m.onDone(); }
 const _d = new V3();
@@ -2174,20 +2340,24 @@ function updateMissiles(dt) {
         for (const s of W.ships) if (s.side !== m.side && !s.dead) { const d = Math.hypot(s.x - m.p.x, s.z - m.p.z); if (d < 120) damageShip(s, 1100 * clamp(1.15 - d / 120, 0.3, 1), m.p, m.owner, 'bm'); }
       }
     } else {
-      m.speed = Math.min(m.max, m.speed + (m.kind === 'sam' ? 700 : m.kind === 'asroc' ? 200 : 140) * dt);
       const tg = m.target && !m.target.dead && !m.target.sunk ? m.target : null;
+      // Terminal sprint: YJ-18 and YJ-83 go supersonic for the last few kilometres
+      if (m.prof && m.prof.sprint && tg && !tg.isAir && Math.hypot(tg.x - m.p.x, tg.z - m.p.z) < m.prof.sprintAt) m.max = m.prof.sprint;
+      m.speed = Math.min(m.max, m.speed + (m.kind === 'sam' ? 700 : m.kind === 'asroc' ? 200 : m.max - m.speed > 200 ? 320 : 140) * dt);
       let aim = null;
       if (m.decoy) aim = m.decoy;
       else if (tg) {
         const tt = m.p.distanceTo(tg.isAir || tg.isMissile ? tg.p : _v.set(tg.x, 0, tg.z)) / m.speed;
         aim = tg.isAir || tg.isMissile ? _v.set(tg.p.x + tg.vx * tt, tg.p.y + (tg.vy || 0) * tt, tg.p.z + tg.vz * tt) : _v.set(tg.x + tg.vx * tt, tg.top * 0.35 + tg.obj.position.y, tg.z + tg.vz * tt);
       } else if (m.aim) aim = m.aim;
-      if (m.t > m.boost && aim) {
+      if (m.t > m.boost && aim && !m.lost) {
         const dxz = Math.hypot(aim.x - m.p.x, aim.z - m.p.z);
         let ty = aim.y, rate = 3.5;
-        if (m.kind === 'asm') { ty = dxz > 1300 ? m.alt : aim.y; rate = dxz > 1300 ? 0.75 : 2.2; }
+        if (m.kind === 'asm') { ty = dxz > 1300 ? m.alt : aim.y; rate = dxz > 1300 ? 0.75 : m.speed > 500 ? 1.6 : 2.2; }
         else if (m.kind === 'asroc') { ty = dxz > 900 ? 260 : -10; rate = 1.2; }
         _d.set(aim.x - m.p.x, 0, aim.z - m.p.z).normalize();
+        // Terminal weave makes the close-in guns work harder
+        if (m.prof && m.prof.weave && dxz < 2600 && dxz > 300) { const w = Math.sin(m.t * 2.7 + m.ph) * 0.42, c = Math.cos(w), sn = Math.sin(w); _d.set(_d.x * c - _d.z * sn, 0, _d.x * sn + _d.z * c); }
         _d.y = clamp((ty - m.p.y) / Math.max(150, Math.min(dxz, 900)), -0.9, 0.9);
         _d.normalize();
         const ang = Math.acos(clamp(m.d.dot(_d), -1, 1));
@@ -2208,7 +2378,9 @@ function updateMissiles(dt) {
       if (m.kind === 'sam') {
         if (tg && m.p.distanceToSquared(tg.isAir || tg.isMissile ? tg.p : tg.pos) < 600) {
           airburst(m.p);
-          if (Math.random() < m.pk) { if (tg.isAir) killJet(tg, m.owner); else killMissile(tg, m.owner); }
+          const fast = tg.isMissile ? clamp(420 / Math.max(1, tg.speed), 0.45, 1.1) : 1;
+          if (Math.random() < m.pk * fast) { if (tg.isAir) killJet(tg, m.owner); else killMissile(tg, m.owner); }
+          else if (m.owner.player) radio('Weapons', `${m.pd ? 'Point-defence round' : SAM_NAME[PL.side]} missed. Re-engaging.`, 'quiet');
           m.dead = true;
         }
       } else if (m.kind === 'asroc') {
@@ -2227,6 +2399,7 @@ function updateMissiles(dt) {
         if (!m.dead && m.decoy && m.p.distanceToSquared(m.decoy) < 3600) { airburst(m.p); m.dead = true; }
         if (!m.dead && m.t > m.boost && m.p.y < 0.3) { fxSplash(m.p.x, m.p.z, 1.2); m.dead = true; }
       }
+      if (!m.dead && m.lost && m.kind === 'asm' && m.t > m.lostT) { m.d.y -= 0.25 * dt; m.d.normalize(); }
       if (!m.dead && m.t > m.life) { airburst(m.p); m.dead = true; }
     }
     if (!m.dead) { m.obj.position.copy(m.p); m.obj.quaternion.setFromUnitVectors(_up, m.d); }
@@ -2268,7 +2441,7 @@ function updateJets(dt) {
           j.msl--; j.fireT = 0.7;
           const dir = new V3(fx(j.h), -0.05, fz(j.h));
           const dm = (j.side === PL.side ? 0.8 : DIFF[CFG.diff].dmg) * 230;
-          launchMissile('asm', j, j.p.clone().add(new V3(0, -2, 0)), dir, tg, { dmg: dm, boost: 0.4, speed0: 220 });
+          launchMissile('asm', j, j.p.clone().add(new V3(0, -2, 0)), dir, tg, { prof: JET_ASM[j.side], dmg: dm, boost: 0.4, speed0: 220 });
         }
       }
       if (j.msl === 0) { j.state = 'out'; j.outH = j.h + (Math.random() < 0.5 ? 1 : -1) * 2.4; }
@@ -2329,39 +2502,55 @@ function updateTorps(dt) {
   W.torps = W.torps.filter(t => !t.dead);
 }
 
-/* Close-in weapon systems engage incoming missiles automatically. */
+/* Close-in weapon systems engage incoming missiles automatically, one target per gun mount. */
+function ciwsMounts(s) {
+  if (!s.ciwsState) {
+    const pts = s.model.ciwsPts.filter(p => p.type !== 'hq10' && p.type !== 'ram');
+    const use = pts.length ? pts : s.model.ciwsPts;
+    s.ciwsState = use.map(p => ({ p, t: rand(0.3), target: null, firing: false }));
+  }
+  return s.ciwsState;
+}
 function updateCIWS(s, dt) {
   if (s.dead || !s.C.ciws) return;
   const q = s.C.ciws * (s.player || s.side === PL.side ? 1 : DIFF[CFG.diff].ciwsVs / 0.6);
-  s.ciwsT -= dt;
-  if (s.ciwsT <= 0) {
-    s.ciwsT = 0.35;
-    let best = null, bd = 2100;
-    for (const m of W.missiles) {
-      if (m.side === s.side || m.dead || m.kind === 'sam') continue;
-      const d = Math.hypot(m.p.x - s.x, m.p.z - s.z);
-      if (d < bd && (m.target === s || d < 900)) { bd = d; best = m; }
-    }
-    if (!best) for (const j of W.jets) { if (j.side === s.side) continue; const d = j.p.distanceTo(s.pos); if (d < 1500 && d < bd) { bd = d; best = j; } }
-    s.ciwsTarget = best;
-  }
-  const t = s.ciwsTarget;
+  const mounts = ciwsMounts(s);
   s.ciwsFiring = false;
-  if (!t || t.dead) return;
-  const d = t.p.distanceTo(s.pos);
-  if (d > 2100) return;
-  s.ciwsFiring = true;
-  const mount = s.model.ciwsPts[0];
-  _v.copy(mount); s.obj.localToWorld(_v);
-  const n = Math.random() < 0.6 ? 2 : 1;
-  for (let i = 0; i < n; i++) {
-    const tt = d / 1100;
-    const aim = new V3(t.p.x + t.vx * tt + rand(-8, 8), t.p.y + (t.vy || 0) * tt + rand(-6, 6), t.p.z + t.vz * tt + rand(-8, 8));
-    const v = aim.sub(_v).normalize().multiplyScalar(1100);
-    W.rounds.push({ p: _v.clone(), v, t: Math.min(d / 1100 + 0.15, 2.2) });
+  for (const mt of mounts) {
+    mt.t -= dt;
+    if (mt.t <= 0) {
+      mt.t = 0.3;
+      let best = null, bd = 2100;
+      const fwd = mt.p.x >= 0;
+      const inArc = (x, z) => { const rel = Math.abs(wrapPi(bearing(s.x, s.z, x, z) - s.h)); return fwd ? rel < 2.8 : rel > 0.35; };
+      for (const m of W.missiles) {
+        if (m.side === s.side || m.dead || m.kind === 'sam') continue;
+        if (mounts.some(o => o !== mt && o.target === m) && mounts.length > 1) continue;
+        const d = Math.hypot(m.p.x - s.x, m.p.z - s.z);
+        if (d < bd && (m.target === s || d < 900) && inArc(m.p.x, m.p.z)) { bd = d; best = m; }
+      }
+      if (!best) for (const j of W.jets) { if (j.side === s.side) continue; const d = j.p.distanceTo(s.pos); if (d < 1500 && d < bd && inArc(j.p.x, j.p.z)) { bd = d; best = j; } }
+      mt.target = best;
+    }
+    const t = mt.target;
+    mt.firing = false;
+    if (!t || t.dead) continue;
+    const d = t.p.distanceTo(s.pos);
+    if (d > 2100) continue;
+    mt.firing = true; s.ciwsFiring = true;
+    _v.copy(mt.p); s.obj.localToWorld(_v);
+    const n = Math.random() < 0.6 ? 2 : 1;
+    for (let i = 0; i < n; i++) {
+      const tt = d / 1100;
+      const aim = new V3(t.p.x + t.vx * tt + rand(-8, 8), t.p.y + (t.vy || 0) * tt + rand(-6, 6), t.p.z + t.vz * tt + rand(-8, 8));
+      const v = aim.sub(_v).normalize().multiplyScalar(1100);
+      W.rounds.push({ p: _v.clone(), v, t: Math.min(d / 1100 + 0.15, 2.2) });
+    }
+    // Fast or weaving missiles are much harder to hit
+    const fast = t.isMissile ? clamp(320 / Math.max(1, t.speed), 0.3, 1.15) * (t.prof && t.prof.weave && d < 2600 ? 0.8 : 1) : 0.45;
+    const pk = q * (d < 1000 ? 0.45 : 0.15) * fast;
+    if (Math.random() < pk * dt) { if (t.isAir) killJet(t, s); else killMissile(t, s); mt.target = null; }
   }
-  const pk = q * (d < 1000 ? 0.45 : 0.15) * (t.isAir ? 0.45 : 1);
-  if (Math.random() < pk * dt) { if (t.isAir) killJet(t, s); else killMissile(t, s); s.ciwsTarget = null; }
 }
 
 
@@ -2374,7 +2563,9 @@ const ORDERS = [
 ];
 const PL = {
   side: 'ALLIED', ship: null, yaw: 0, pitch: -0.06, zoom: 0, zoomOn: false, fire: false, lock: null, telegraph: 5, rudder: 0,
-  msl: 8, special: 1, chaff: 4, flares: 0, chaffCd: 0, gunCd: 0, shake: 0, dmg: 0, lastHit: -99, salvo: [],
+  asm: 6, sam: 12, asroc: 2, pd: 0, special: 1, chaff: 4, flares: 0, chaffCd: 0, gunCd: 0, shake: 0, dmg: 0, lastHit: -99, salvo: [],
+  adMode: 'auto', samCd: 0, pdCd: 0, ecmT: 0, ecmCd: 0, salvoN: 1, lockManual: false, track: false, zoomLevel: 0, zoomF: 1, invertY: false,
+  sys: { gun: 100, radar: 100, launchers: 100, engines: 100, steering: 100 }, dcT: 0, dcCd: 0, dcSys: null, mcamOn: true, mcamM: null, mcamHold: 0,
   stats: { shells: 0, hits: 0, msl: 0, kills: 0, air: 0, intercepts: 0 }, aimPoint: new V3(), masked: false, aimRay: new THREE.Ray(),
   pointer: false, cursor: { x: 0.5, y: 0.5 }, look: { x: 0, y: 0 }, keys: {}, touch: false, stick: { x: 0, y: 0 }, msg: '',
 };
@@ -2387,6 +2578,9 @@ function setupPlayer(side, x, z, h) {
   s.order = s.speed;
   PL.ship = s; PL.side = side; PL.yaw = 0; PL.pitch = -0.07; PL.telegraph = 5; PL.rudder = 0; PL.lock = null; PL.dmg = 0; PL.shake = 0;
   PL.stats = { shells: 0, hits: 0, msl: 0, kills: 0, air: 0, intercepts: 0 };
+  PL.sys = { gun: 100, radar: 100, launchers: 100, engines: 100, steering: 100 };
+  PL.dcT = 0; PL.dcCd = 0; PL.ecmT = 0; PL.ecmCd = 0; PL.samCd = 0; PL.pdCd = 0; PL.lockManual = false; PL.track = false; PL.mcamM = null; PL.mcamHold = 0; PL.zoomLevel = 0; PL.zoomF = 1;
+  s.baseMax = s.maxSpeed;
   s.obj.add(camera);
   camera.position.set(s.model.eye.x, s.model.eye.y, s.model.eye.z);
   return s;
@@ -2409,9 +2603,18 @@ function updatePlayerControls(dt) {
       PL.stickT = (PL.stickT || 0) + dt;
       if (Math.abs(PL.stick.y) > 0.6 && PL.stickT > 0.45) { PL.stickT = 0; telegraph(PL.stick.y < 0 ? 1 : -1); }
     }
-    s.rudder = PL.rudder;
+    s.rudder = PL.rudder * (0.3 + 0.7 * PL.sys.steering / 100);
     s.order = s.maxSpeed * ORDERS[PL.telegraph].v;
+    updateSystems(dt);
   }
+  // Padlock view: keep the locked target in the crosshair
+  if (PL.track && PL.lock && !PL.lock.dead && !PL.lock.sunk) {
+    const t = PL.lock, cp = camera.getWorldPosition(_v3);
+    const tx = t.isAir || t.isMissile ? t.p.x : t.x, tz = t.isAir || t.isMissile ? t.p.z : t.z, ty = t.isAir || t.isMissile ? t.p.y : t.obj.position.y + t.top * 0.3;
+    const k = clamp(dt * 7, 0, 1);
+    PL.yaw += wrapPi(bearing(cp.x, cp.z, tx, tz) - s.h - PL.yaw) * k;
+    PL.pitch = lerp(PL.pitch, Math.atan2(ty - cp.y, Math.hypot(tx - cp.x, tz - cp.z)), k);
+  } else if (PL.track && (!PL.lock || PL.lock.dead)) PL.track = false;
   // Looking around: pointer lock, or a cursor that pans the view at the screen edges
   if (!PL.pointer && !PL.touch) {
     const ex = PL.cursor.x < 0.08 ? -(0.08 - PL.cursor.x) / 0.08 : PL.cursor.x > 0.92 ? (PL.cursor.x - 0.92) / 0.08 : 0;
@@ -2421,12 +2624,17 @@ function updatePlayerControls(dt) {
   }
   PL.pitch = clamp(PL.pitch, -0.6, 1.1);
   PL.yaw = wrapPi(PL.yaw);
-  PL.zoom = lerp(PL.zoom, PL.zoomOn ? 1 : 0, clamp(dt * 8, 0, 1));
-  camera.fov = lerp(68, 9.5, PL.zoom);
+  // Zoom: scroll wheel steps 1x, 2.5x, 6x, 12x; holding right click gives 7x binoculars
+  const zf = PL.zoomOn ? Math.max(7, ZOOMS[PL.zoomLevel]) : ZOOMS[PL.zoomLevel];
+  PL.zoomF = lerp(PL.zoomF, zf, clamp(dt * 9, 0, 1));
+  camera.fov = 68 / PL.zoomF;
   camera.updateProjectionMatrix();
-  GRADE.scope.value = PL.zoom > 0.02 ? Math.min(1, PL.zoom * 1.4) : 0;
+  PL.zoom = smooth(4, 6.5, PL.zoomF);
+  GRADE.scope.value = PL.zoom > 0.02 ? Math.min(1, PL.zoom * 1.3) : 0;
 }
 
+const ZOOMS = [1, 2.5, 6, 12];
+const _v3 = new V3();
 const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion(), _ea = new THREE.Euler();
 function updatePlayerCamera(dt) {
   const s = PL.ship; if (!s) return;
@@ -2462,7 +2670,7 @@ function aimUpdate() {
   let best = null, ba = 3.6 * DEG * fovK;
   const keep = PL.lock && !PL.lock.dead && !PL.lock.sunk ? 7 * DEG * fovK : 0;
   const consider = (t, p) => {
-    _v.copy(p).sub(o); const dist = _v.length(); if (dist > 26000 || dist < 30) return;
+    _v.copy(p).sub(o); const dist = _v.length(); if (dist > (sysOK('radar') ? 26000 : 6000) || dist < 30) return;
     const a = _v.normalize().angleTo(d);
     const lim = t === PL.lock ? Math.max(keep, ba) : ba;
     if (a < lim) { if (!best || a < ba || t === PL.lock) { best = t; ba = Math.min(a, ba); } }
@@ -2470,7 +2678,24 @@ function aimUpdate() {
   for (const t of W.ships) if (!t.dead && hostile(t, s) && t.detected) consider(t, _v2.set(t.x, t.obj.position.y + t.top * 0.35, t.z));
   for (const j of W.jets) if (hostile(j, s)) consider(j, j.p);
   for (const m of W.missiles) if (hostile(m, s) && m.kind !== 'sam') consider(m, m.p);
+  // A target picked with T stays locked until you put the crosshair right on another one
+  if (PL.lockManual && PL.lock && !PL.lock.dead && !PL.lock.sunk) {
+    if (best && best !== PL.lock && ba < 1.2 * DEG * fovK) { PL.lockManual = false; } else return;
+  } else PL.lockManual = false;
   if (best !== PL.lock) { PL.lock = best; if (best) sfx('blip', 1, 0, 1320); }
+}
+function cycleTarget(dir = 1) {
+  const s = PL.ship; if (!s || state !== 'play') return;
+  const maxR = sysOK('radar') ? 26000 : 6000;
+  const list = [
+    ...W.jets.filter(j => hostile(j, s)),
+    ...W.ships.filter(t => hostile(t, s) && !t.dead && t.detected),
+  ].map(o => ({ o, d: o.isAir || o.isMissile ? o.p.distanceTo(s.pos) : Math.hypot(o.x - s.x, o.z - s.z) })).filter(e => e.d < maxR).sort((a, b) => a.d - b.d).map(e => e.o);
+  if (!list.length) { flashMsg('No contacts to lock'); return; }
+  const i = list.indexOf(PL.lock);
+  PL.lock = list[(i + dir + list.length) % list.length];
+  PL.lockManual = true;
+  sfx('blip', 1, 0, 1320);
 }
 
 function playerWeapons(dt) {
@@ -2491,69 +2716,231 @@ function playerWeapons(dt) {
   PL.masked = gi < 0;
   for (let i = 0; i < s.model.turrets.length; i++) {
     const err = aimTurret(s, i, i === gi ? sol.az : s.h + (s.model.turrets[i].aft ? Math.PI : 0), i === gi ? sol.el : 0.05, dt, 0.9);
-    if (i === gi && PL.fire && PL.gunCd <= 0 && err < 0.05) {
+    if (i === gi && PL.fire && PL.gunCd <= 0 && err < 0.05 && sysOK('gun')) {
       const m = turretMuzzle(s, i);
       const v = velFrom(sol.el + rand(-0.0011, 0.0011), sol.az + rand(-0.0014, 0.0014), SHELL_V);
       fireShell(s, m, v, 55, { aa });
       PL.gunCd = 1.05;
     }
   }
-  // Queued salvo launches (Harpoon salvo)
-  for (const q of PL.salvo) { q.t -= dt; if (q.t <= 0 && !q.done) { q.done = true; playerLaunch('asm', q.target, true); } }
+  // Queued salvo launches
+  for (const q of PL.salvo) { q.t -= dt; if (q.t <= 0 && !q.done) { q.done = true; if (!q.target.dead) playerLaunch('asm', q.target, q.prof); } }
   PL.salvo = PL.salvo.filter(q => !q.done);
+  playerAirDefence(dt);
+  PL.ecmT = Math.max(0, PL.ecmT - dt); PL.ecmCd -= dt;
 }
 
-function playerLaunch(kind, target, salvo = false) {
+function playerLaunch(kind, target, prof) {
   const s = PL.ship;
-  const coal = PL.side === 'ALLIED';
   const S = SPECS[s.cls];
+  const coal = PL.side === 'ALLIED';
+  const tx = target.isAir || target.isMissile ? target.p.x : target.x, tz = target.isAir || target.isMissile ? target.p.z : target.z;
+  const b = bearing(s.x, s.z, tx, tz);
   let from, dir;
-  if (salvo && S.canisters) {
+  if (kind === 'asm' && coal && S.canisters) {
+    // Kee Lung's anti-ship missiles leave the angled canisters amidships
     from = _v.set(S.canisters[0].x, s.P.deckAt(S.canisters[0].x) + 6, rand(-2, 2)); s.obj.localToWorld(from); from = from.clone();
-    const b = bearing(s.x, s.z, target.x, target.z);
     dir = new V3(fx(b), 0.35, fz(b));
+  } else if (kind === 'pd') {
+    const pd = (S.ciws || []).find(c => c.type === 'hq10') || { x: -50, y: 6, z: 0 };
+    from = _v.set(pd.x, s.P.deckAt(pd.x) + pd.y + 2, pd.z); s.obj.localToWorld(from); from = from.clone();
+    dir = new V3(fx(b), 0.5, fz(b));
   } else if (coal && S.arms) {
-    from = _v.set(S.arms[0].x + 2, s.P.deckAt(S.arms[0].x) + 3.5, 0); s.obj.localToWorld(from); from = from.clone();
-    const b = target.isAir || target.isMissile ? bearing(s.x, s.z, target.p.x, target.p.z) : bearing(s.x, s.z, target.x, target.z);
-    dir = new V3(fx(b), 0.6, fz(b));
+    // SM-2s alternate between the forward and aft Mk 26 launchers
+    PL.arm = (PL.arm || 0) + 1;
+    const a = S.arms[PL.arm % S.arms.length];
+    from = _v.set(a.x + 2, s.P.deckAt(a.x) + 3.5, 0); s.obj.localToWorld(from); from = from.clone();
+    dir = new V3(fx(b), 0.7, fz(b));
   } else {
-    const v = S.vls ? S.vls[0] : { x: 30 };
+    const v = S.vls ? S.vls[(PL.arm = (PL.arm || 0) + 1) % S.vls.length] : { x: 30 };
     from = _v.set(v.x + rand(-3, 3), s.P.deckAt(v.x) + 1.5, rand(-3, 3)); s.obj.localToWorld(from); from = from.clone();
     dir = new V3(0, 1, 0);
   }
-  if (kind === 'asm') launchMissile('asm', s, from, dir, target, { dmg: 280, boost: 1.6 });
-  else if (kind === 'sam') launchMissile('sam', s, from, dir, target, { pk: 0.85, boost: 0.45 });
-  else if (kind === 'asroc') launchMissile('asroc', s, from, dir, target, { boost: 1.0 });
+  let m;
+  if (kind === 'asm') m = launchMissile('asm', s, from, dir, target, { prof: prof || PLAYER_ASM[PL.side], boost: coal ? 0.8 : 1.6 });
+  else if (kind === 'sam') m = launchMissile('sam', s, from, dir, target, { pk: 0.85, boost: 0.45 });
+  else if (kind === 'pd') m = launchMissile('sam', s, from, dir, target, { pk: 0.8, boost: 0.15, pd: true });
+  else if (kind === 'asroc') m = launchMissile('asroc', s, from, dir, target, { boost: 1.0 });
+  if (m && (kind === 'sam' || kind === 'pd')) { target.samOn = true; m.onDone = () => { target.samOn = false; }; }
+  if (m && (kind === 'asm' || kind === 'asroc')) { PL.mcamM = m; }
+  return m;
 }
 function fireMissileKey() {
   const s = PL.ship; if (!s || s.dead || state !== 'play') return;
+  if (!sysOK('launchers')) { flashMsg('Missile launchers are damaged. Send a repair team (H)'); return; }
   const t = PL.lock;
-  if (!t) { flashMsg('Lock a target first: put the crosshair on it'); return; }
-  if (PL.msl <= 0) { flashMsg('Missile cells empty'); return; }
-  PL.msl--;
-  if (t.isAir || t.isMissile) { playerLaunch('sam', t); radio('Weapons', `Bird away, ${t.isAir ? t.name : 'missile'} engaged.`, 'quiet'); }
-  else if (t.isSub) { playerLaunch('asroc', t); radio('Weapons', `ASROC away on ${t.name}.`, 'quiet'); }
-  else { playerLaunch('asm', t); radio('Weapons', `${PL.side === 'ALLIED' ? 'Hsiung Feng' : 'YJ-18'} away. Target ${t.name}.`, 'quiet'); }
+  if (!t) { flashMsg('Lock a target first: crosshair on it, or press T'); return; }
+  if (t.isAir || t.isMissile) {
+    if (PL.sam <= 0) { flashMsg(`No ${SAM_NAME[PL.side]} missiles left`); return; }
+    if (t.samOn) { flashMsg('Already engaged'); return; }
+    PL.sam--; playerLaunch('sam', t); radio('Weapons', `${SAM_NAME[PL.side]} away, ${t.isAir ? t.name : t.prof ? t.prof.name : 'missile'} engaged.`, 'quiet');
+  } else if (t.isSub) {
+    if (PL.asroc <= 0) { flashMsg('No anti-submarine rockets left'); return; }
+    PL.asroc--; playerLaunch('asroc', t); radio('Weapons', `ASROC away on ${t.name}.`, 'quiet');
+  } else {
+    const n = Math.min(PL.salvoN, PL.asm);
+    if (n <= 0) { flashMsg('No anti-ship missiles left'); return; }
+    PL.asm -= n;
+    const prof = PLAYER_ASM[PL.side];
+    for (let i = 0; i < n; i++) PL.salvo.push({ t: i * 0.6, target: t, prof });
+    radio('Weapons', `${n > 1 ? n + ' ' : ''}${ASM[prof].name}${n > 1 ? 's' : ''} away. Target ${t.name}.`, 'quiet');
+  }
 }
 function fireSpecialKey() {
   const s = PL.ship; if (!s || s.dead || state !== 'play') return;
   if (PL.special <= 0) { flashMsg('Special weapon expended'); return; }
   if (PL.side === 'ALLIED') {
+    if (!sysOK('launchers')) { flashMsg('Missile launchers are damaged'); return; }
     const tgts = W.ships.filter(t => hostile(t, s) && !t.dead && !t.isSub && t.detected && Math.hypot(t.x - s.x, t.z - s.z) < 32000).sort((a, b) => Math.hypot(a.x - s.x, a.z - s.z) - Math.hypot(b.x - s.x, b.z - s.z));
     if (!tgts.length) { flashMsg('No surface targets in range'); return; }
     PL.special--;
-    for (let i = 0; i < 4; i++) PL.salvo.push({ t: i * 0.45, target: PL.lock && !PL.lock.isAir && !PL.lock.isMissile && !PL.lock.isSub && i < 2 ? PL.lock : tgts[i % tgts.length] });
-    radio('Weapons', 'Harpoon salvo, four birds away.', '');
+    const lockShip = PL.lock && !PL.lock.isAir && !PL.lock.isMissile && !PL.lock.isSub ? PL.lock : null;
+    for (let i = 0; i < 4; i++) PL.salvo.push({ t: i * 0.45, target: lockShip && i < 2 ? lockShip : tgts[i % tgts.length], prof: 'hf3' });
+    radio('Weapons', 'Hsiung Feng III salvo, four supersonic birds away.', '');
   } else {
     const t = PL.lock && !PL.lock.isAir && !PL.lock.isMissile && !PL.lock.isSub ? PL.lock : null;
     const at = t ? new V3(t.x + t.vx * 6, 0, t.z + t.vz * 6) : PL.aimPoint.clone();
     if (Math.hypot(at.x - s.x, at.z - s.z) < 1500) { flashMsg('Too close to our own ship'); return; }
     PL.special--;
     const m = launchMissile('bm', s, new V3(at.x, 10200, at.z), new V3(0, -1, 0), null, {});
-    m.obj.visible = true;
+    PL.mcamM = m;
     radio('Rocket Force', `DF-21D launched. Impact at grid ${Math.round(at.x / 100)}/${Math.round(-at.z / 100)} in six seconds.`, '');
   }
 }
+function salvoKey() { PL.salvoN = PL.salvoN === 1 ? 2 : PL.salvoN === 2 ? 4 : 1; flashMsg(`Anti-ship salvo: ${PL.salvoN} missile${PL.salvoN > 1 ? 's' : ''} per launch`); sfx('blip', 1, 0, 990); }
+function adModeKey() {
+  PL.adMode = PL.adMode === 'auto' ? 'manual' : 'auto';
+  radio('Weapons', PL.adMode === 'auto' ? 'Air defence to automatic. Fire control will engage inbound threats.' : 'Air defence to manual. Missiles only on your order (E).', '');
+}
+function ecmKey() {
+  const s = PL.ship; if (!s || s.dead || state !== 'play') return;
+  if (PL.ecmCd > 0) { flashMsg(`Jammer recharging, ${Math.ceil(PL.ecmCd)}s`); return; }
+  if (!sysOK('radar')) { flashMsg('Jammer is down with the radar'); return; }
+  PL.ecmT = 10; PL.ecmCd = 40;
+  let broke = 0;
+  for (const m of W.missiles) {
+    if (m.target !== s || m.kind !== 'asm' || m.lost) continue;
+    if (m.p.distanceTo(s.pos) > 2000 && Math.random() < 0.45) { m.lost = true; m.lostT = m.t + 1.5; m.life = m.t + 14; if (m.target.inbound) m.target.inbound--; m.target = null; broke++; }
+  }
+  radio('EW', broke ? `Jammer on. ${broke} seeker${broke > 1 ? 's' : ''} broke lock.` : 'Jammer on. Enemy fire-control radars are degraded.', broke ? 'good' : '');
+  sfx('blip', 1, 0, 440);
+}
+function trackKey() {
+  if (!PL.lock) { flashMsg('Lock a target to track it'); return; }
+  PL.track = !PL.track; flashMsg(PL.track ? `Tracking ${PL.lock.name || 'missile'}` : 'Free look');
+}
+
+/* Ship's systems: hits knock them out, repair parties bring them back. */
+const SYS_NAME = { gun: 'Main gun', radar: 'Radar', launchers: 'Launchers', engines: 'Engines', steering: 'Steering' };
+const SYS_MSG = {
+  gun: 'Main gun mount is out of action!', radar: 'Air search radar is down. We are blind beyond six kilometres!',
+  launchers: 'Missile launchers damaged. No missiles until they are repaired!', engines: 'Engine room hit. We are losing speed!', steering: 'Steering gear damaged. The helm is sluggish!',
+};
+const sysOK = k => PL.sys[k] >= 35;
+function sysHit(p, amt) {
+  const s = PL.ship;
+  let k;
+  if (!p) k = pick(['engines', 'steering']);
+  else {
+    const lp = s.obj.worldToLocal(p.clone()), f = lp.x / s.L;
+    if (lp.y > s.top * 0.6) k = 'radar';
+    else if (f > 0.2) k = Math.random() < 0.6 ? 'gun' : 'launchers';
+    else if (f < -0.3) k = Math.random() < 0.5 ? 'steering' : 'engines';
+    else k = Math.random() < 0.5 ? 'engines' : 'launchers';
+  }
+  const was = sysOK(k);
+  PL.sys[k] = Math.max(0, PL.sys[k] - amt * rand(0.35, 0.8));
+  if (was && !sysOK(k)) radio('Damage control', SYS_MSG[k] + ' (H sends a repair party)', 'bad');
+}
+function updateSystems(dt) {
+  const s = PL.ship;
+  for (const k in PL.sys) PL.sys[k] = Math.min(100, PL.sys[k] + dt * 0.7);
+  if (PL.dcT > 0) {
+    PL.dcT -= dt;
+    const was = sysOK(PL.dcSys);
+    PL.sys[PL.dcSys] = Math.min(100, PL.sys[PL.dcSys] + dt * 9);
+    if (!was && sysOK(PL.dcSys)) radio('Damage control', `${SYS_NAME[PL.dcSys]} back on line.`, 'good');
+  }
+  PL.dcCd -= dt;
+  s.maxSpeed = s.baseMax * (0.35 + 0.65 * PL.sys.engines / 100);
+}
+function damageControlKey() {
+  const s = PL.ship; if (!s || s.dead || state !== 'play') return;
+  if (PL.dcCd > 0) { flashMsg(`Repair parties busy, ${Math.ceil(PL.dcCd)}s`); return; }
+  const k = Object.keys(PL.sys).sort((a, b) => PL.sys[a] - PL.sys[b])[0];
+  if (PL.sys[k] >= 98 && !s.fires.length) { flashMsg('All systems working'); return; }
+  PL.dcSys = k; PL.dcT = 12; PL.dcCd = 25;
+  s.fires.splice(0, 2);
+  radio('Damage control', `Repair party to the ${SYS_NAME[k].toLowerCase()}${s.fires.length ? '' : ', fires under control'}.`, '');
+}
+
+/* Automatic air defence: shoot at what threatens us or the ships we guard. */
+function threatList() {
+  const s = PL.ship, out = [];
+  for (const m of W.missiles) {
+    if (m.side === PL.side || m.dead || (m.kind !== 'asm' && m.kind !== 'bm')) continue;
+    const d = m.p.distanceTo(s.pos);
+    if (d > 30000) continue;
+    const tg = m.target;
+    const toward = tg ? Math.hypot(tg.x - m.p.x, tg.z - m.p.z) : d;
+    out.push({ o: m, kind: 'msl', d, tti: toward / Math.max(50, m.speed), tgt: tg });
+  }
+  for (const j of W.jets) { if (j.side === PL.side) continue; const d = j.p.distanceTo(s.pos); if (d < 32000) out.push({ o: j, kind: 'air', d, tti: d / j.speed, tgt: j.target }); }
+  return out.sort((a, b) => a.tti - b.tti);
+}
+function playerAirDefence(dt) {
+  PL.samCd -= dt; PL.pdCd -= dt;
+  const s = PL.ship;
+  if (PL.adMode !== 'auto' || !sysOK('radar') || !sysOK('launchers')) return;
+  for (const th of threatList()) {
+    const o = th.o;
+    if (o.samOn || o.dead) continue;
+    if (th.kind === 'msl') {
+      if (o.kind === 'bm' || o.lost || o.decoy) continue;
+      const guarded = th.tgt && th.tgt.side === PL.side && Math.hypot(th.tgt.x - s.x, th.tgt.z - s.z) < 9000;
+      if (!guarded) continue;
+      if (th.d < 11000 && th.d > 1500 && PL.sam > 0 && PL.samCd <= 0) { PL.sam--; PL.samCd = 1.1; playerLaunch('sam', o); }
+      else if (PL.pd > 0 && th.d <= 4500 && th.d > 500 && PL.pdCd <= 0) { PL.pd--; PL.pdCd = 0.6; playerLaunch('pd', o); }
+    } else if (th.d < 15000 && PL.sam > 3 && PL.samCd <= 0 && th.tgt && th.tgt.side === PL.side) { PL.sam--; PL.samCd = 1.1; playerLaunch('sam', o); }
+  }
+}
+
+/* Missile camera: a picture-in-picture chase view of your latest missile. */
+const mcam = new THREE.PerspectiveCamera(55, 16 / 9, 0.5, 80000);
+mcam.layers.enable(1);
+const mcamLast = new V3(), mcamDir = new V3(1, 0, 0);
+function renderMissileCam(dt) {
+  const el = $('mcam');
+  let m = PL.mcamM;
+  if (m && m.dead) { PL.mcamHold = 2.5; PL.mcamM = m = null; }
+  if (PL.mcamHold > 0) PL.mcamHold -= dt;
+  if (!PL.mcamOn || state !== 'play' || (!m && PL.mcamHold <= 0)) { el.hidden = true; return; }
+  el.hidden = false;
+  if (m) {
+    mcamLast.copy(m.p); mcamDir.copy(m.d);
+    const back = m.kind === 'bm' ? 160 : 26;
+    mcam.position.copy(m.p).addScaledVector(m.d, -back).add(_v.set(0, m.kind === 'bm' ? 0 : 4, 0));
+    if (m.kind === 'bm') mcam.position.x += 60;
+    mcam.lookAt(_v.copy(m.p).addScaledVector(m.d, 220));
+    const tg = m.target;
+    $('mcamCap').textContent = `${m.prof ? m.prof.name : m.kind === 'bm' ? 'DF-21D' : 'ASROC'} · ${Math.round(m.speed * 3.6)} km/h${tg && !tg.dead ? ` · ${(Math.hypot(tg.x - m.p.x, tg.z - m.p.z) / 1000).toFixed(1)} km to ${tg.name}` : ''}`;
+  } else {
+    $('mcamCap').textContent = 'Impact';
+    mcam.lookAt(mcamLast);
+  }
+  const r = el.getBoundingClientRect();
+  const x = r.left, y = window.innerHeight - r.bottom;
+  mcam.aspect = r.width / r.height; mcam.updateProjectionMatrix();
+  const wx = water.position.x, wz = water.position.z;
+  water.position.x = mcam.position.x; water.position.z = mcam.position.z;
+  renderer.setScissorTest(true);
+  renderer.setViewport(x, y, r.width, r.height); renderer.setScissor(x, y, r.width, r.height);
+  renderer.render(scene, mcam);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+  water.position.x = wx; water.position.z = wz;
+}
+
 function chaffKey() {
   const s = PL.ship; if (!s || s.dead || state !== 'play') return;
   if (PL.chaff <= 0) { flashMsg('No decoys left'); return; }
@@ -2593,6 +2980,7 @@ function onPlayerHit(amt, p, kind) {
   PL.dmg = Math.min(1, PL.dmg + amt / 300);
   PL.lastHit = MS.t;
   sfx('hit', 1);
+  if (kind !== 'ground') sysHit(p, amt);
   const hp = PL.ship.hp / PL.ship.maxHp;
   if (kind === 'asm') radio('Damage control', `Missile hit ${p && p.distanceTo(camera.getWorldPosition(_v2)) < 60 ? 'forward' : 'amidships'}! Fire parties away.`, 'bad');
   else if (kind === 'torp') radio('Damage control', 'Torpedo hit! Flooding in the engine room.', 'bad');
@@ -2780,6 +3168,11 @@ function drawRadar() {
   for (const m of W.missiles) { if (m.kind === 'sam' || m.kind === 'bm') continue; const [x, y] = P(m.p.x, m.p.z); rctx.fillStyle = m.side === PL.side ? '#cfe8ff' : COL.missile; rctx.fillRect(x - 1.5, y - 1.5, 3, 3); }
   for (const tp of W.torps) { const [x, y] = P(tp.p.x, tp.p.z); rctx.fillStyle = tp.side === PL.side ? '#cfe8ff' : COL.missile; rctx.beginPath(); rctx.arc(x, y, 2, 0, TAU); rctx.fill(); }
   rctx.restore();
+  if (!sysOK('radar')) {
+    rctx.fillStyle = 'rgba(160,255,200,0.12)';
+    for (let i = 0; i < 260; i++) { const a = Math.random() * TAU, r = Math.random() * R; rctx.fillRect(Math.cos(a) * r, Math.sin(a) * r, 2, 2); }
+    rctx.strokeStyle = 'rgba(255,90,70,0.6)'; rctx.beginPath(); rctx.arc(0, 0, R * 6000 / radarRange, 0, TAU); rctx.stroke();
+  }
   // Own ship and labels
   rctx.fillStyle = '#e8fff2'; rctx.beginPath(); rctx.moveTo(0, -7); rctx.lineTo(4, 5); rctx.lineTo(-4, 5); rctx.closePath(); rctx.fill();
   rctx.strokeStyle = 'rgba(110,220,160,0.6)'; rctx.lineWidth = 1.5; rctx.beginPath(); rctx.arc(0, 0, R, 0, TAU); rctx.stroke();
@@ -2833,17 +3226,36 @@ function updateHud(dt) {
   $('hdg').textContent = fmtBrg(s.h) + '°';
   $('rud').style.left = (50 + PL.rudder * 46) + '%';
   $('rudTxt').textContent = PL.rudder === 0 ? 'midships' : `${Math.round(Math.abs(PL.rudder) * 35)}° ${PL.rudder < 0 ? 'port' : 'stbd'}`;
-  const sp = PL.side === 'ALLIED' ? 'Harpoon salvo' : 'DF-21D strike';
-  const gun = PL.masked ? '<i class="bad">Masked</i>' : PL.gunCd > 0 ? 'Loading' : '<i class="ok">Ready</i>';
-  const ciws = s.ciwsFiring ? '<i class="bad">Engaging</i>' : 'Auto';
+  const gun = !sysOK('gun') ? '<i class="bad">Damaged</i>' : PL.masked ? '<i class="bad">Masked</i>' : PL.gunCd > 0 ? 'Loading' : '<i class="ok">Ready</i>';
+  const mounts = s.ciwsState ? s.ciwsState.length : 1;
+  const ciws = s.ciwsFiring ? '<i class="bad">Engaging</i>' : `Auto${mounts > 1 ? ' ×' + mounts : ''}`;
+  const lnch = sysOK('launchers');
+  const ecm = PL.ecmT > 0 ? `<i class="ok">On ${Math.ceil(PL.ecmT)}s</i>` : PL.ecmCd > 0 ? `${Math.ceil(PL.ecmCd)}s` : 'Ready';
   const wp = `
-    <div><span>Main gun</span><b>${gun}</b></div>
-    <div><span>Missiles <kbd>E</kbd></span><b>${PL.msl}</b></div>
-    <div><span>${sp} <kbd>Q</kbd></span><b>${PL.special}</b></div>
-    <div><span>Chaff, decoys <kbd>C</kbd></span><b>${PL.chaff}${PL.chaffCd > 0 ? ' · ' + Math.ceil(PL.chaffCd) + 's' : ''}</b></div>
+    <div><span>Main gun <kbd>LMB</kbd></span><b>${gun}</b></div>
+    <div><span>${ASM[PLAYER_ASM[PL.side]].name} <kbd>E</kbd><kbd>B</kbd></span><b>${lnch ? '' : '<i class="bad">Damaged</i> '}${PL.asm} · salvo ${PL.salvoN}</b></div>
+    <div><span>${SAM_NAME[PL.side]} <kbd>G</kbd></span><b>${PL.sam} · ${PL.adMode === 'auto' ? '<i class="ok">Auto</i>' : 'Manual'}</b></div>
+    ${PL.pd ? `<div><span>HQ-10 point defence</span><b>${PL.pd}</b></div>` : ''}
+    ${PL.asroc ? `<div><span>ASROC</span><b>${PL.asroc}</b></div>` : ''}
+    <div><span>${SPECIAL_NAME[PL.side]} <kbd>Q</kbd></span><b>${PL.special}</b></div>
+    <div><span>Chaff <kbd>C</kbd> · Jammer <kbd>J</kbd></span><b>${PL.chaff}${PL.chaffCd > 0 ? ' (' + Math.ceil(PL.chaffCd) + 's)' : ''} · ${ecm}</b></div>
     ${PL.flares || SEA.night ? `<div><span>Star shells <kbd>F</kbd></span><b>${PL.flares}</b></div>` : ''}
     <div><span>CIWS</span><b>${ciws}</b></div>`;
   if (wp !== lastHud) { $('weapons').innerHTML = wp; lastHud = wp; }
+  $('sys').innerHTML = Object.keys(PL.sys).map(k => `<span class="${PL.sys[k] >= 70 ? 'ok' : sysOK(k) ? 'warn' : 'bad'}${PL.dcT > 0 && PL.dcSys === k ? ' fix' : ''}" title="${SYS_NAME[k]} ${Math.round(PL.sys[k])}%">${{ gun: 'GUN', radar: 'RDR', launchers: 'MSL', engines: 'ENG', steering: 'STR' }[k]}</span>`).join('') + `<em>${PL.dcT > 0 ? 'Repairing' : PL.dcCd > 0 ? 'Teams ' + Math.ceil(PL.dcCd) + 's' : 'Repair <kbd>H</kbd>'}</em>`;
+  // Air picture: inbound threats with time to impact and how we are engaging them
+  const th = threatList().slice(0, 6);
+  $('threats').hidden = !th.length;
+  $('aawMode').textContent = `${PL.adMode === 'auto' ? 'AAW auto' : 'AAW manual'}${sysOK('radar') ? '' : ' · radar down'}`;
+  $('threatList').innerHTML = th.map(e => {
+    const o = e.o, brg = fmtBrg(bearing(s.x, s.z, o.p.x, o.p.z));
+    const name = e.kind === 'air' ? o.name : o.kind === 'bm' ? 'Ballistic' : o.prof ? o.prof.name : 'ASM';
+    const vsUs = e.tgt === s;
+    const st = o.lost ? 'Jammed' : o.decoy ? 'Decoyed' : o.samOn ? 'Missile' : W.ships.some(sh => sh.ciwsState && sh.ciwsState.some(mt => mt.target === o)) ? 'CIWS' : e.kind === 'air' ? '' : 'Unengaged';
+    const mach = o.speed / 340;
+    return `<li class="${e.kind === 'msl' && e.tti < 10 && vsUs ? 'crit' : ''}"><b>${name}</b><span>${brg}° ${(e.d / 1000).toFixed(1)}km</span><span>${e.kind === 'msl' ? 'TTI ' + Math.max(0, Math.round(e.tti)) + 's' : 'M' + mach.toFixed(1)}</span><em>${st}${e.kind === 'msl' && !vsUs && e.tgt ? ' · ' + (e.tgt.name || '').split(' ').pop() : ''}</em></li>`;
+  }).join('');
+  $('zoomTxt').textContent = `${PL.zoomF.toFixed(PL.zoomF < 3 ? 1 : 0)}× · mil scale`;
   // Objectives
   $('objList').innerHTML = MS.objs.filter(o => !o.hidden).map(o => `<li class="${o.done ? 'done' : o.failed ? 'failed' : ''}${o.secondary ? ' sec' : ''}"><span></span>${o.text}${o.progress ? ` <em>${o.progress()}</em>` : ''}</li>`).join('');
   const tm = MS.t, rem = MS.limit ? Math.max(0, MS.limit - tm) : null;
@@ -2861,6 +3273,7 @@ function updateHud(dt) {
     al.hidden = false; al.className = 'alert red';
     al.textContent = `TORPEDO · bearing ${fmtBrg(bearing(s.x, s.z, torps[0].p.x, torps[0].p.z))} · ${(Math.hypot(torps[0].p.x - s.x, torps[0].p.z - s.z) / 1000).toFixed(1)} km`;
   } else if (msgT > 0) { al.hidden = false; al.className = 'alert'; al.textContent = PL.msg; }
+  else if (PL.fire && !sysOK('gun')) { al.hidden = false; al.className = 'alert'; al.textContent = 'Main gun out of action: press H for a repair party'; }
   else if (PL.fire && PL.masked) { al.hidden = false; al.className = 'alert'; al.textContent = 'Gun masked: target is behind the superstructure'; }
   else al.hidden = true;
   $('binos').hidden = PL.zoom < 0.5;
@@ -2941,6 +3354,7 @@ function aiShip(s, dt) {
         let rec = s.disp.get(t.id);
         if (!rec) { rec = { r: enemy ? D.disp0 : 260, h: t.h, sp: t.speed }; s.disp.set(t.id, rec); }
         if (Math.abs(wrapPi(t.h - rec.h)) > 0.3 || Math.abs(t.speed - rec.sp) > 4) rec.r = Math.max(rec.r, 150);
+        if (t.player && PL.ecmT > 0) rec.r = Math.max(rec.r, 190);
         rec.h = t.h; rec.sp = t.speed;
         const ang = rand(TAU), rr = Math.sqrt(Math.random()) * rec.r;
         const aim = sol.p.clone().add(new V3(Math.cos(ang) * rr, 0, Math.sin(ang) * rr));
@@ -2961,9 +3375,10 @@ function aiShip(s, dt) {
         s.asm--;
         const from = new V3(s.x + fx(s.h) * s.L * (C.small ? -0.25 : 0.25) + rand(-2, 2), s.P.F + 2, s.z + fz(s.h) * s.L * (C.small ? -0.25 : 0.25));
         const dir = C.small ? new V3(fx(s.h), 0.35, fz(s.h)) : new V3(0, 1, 0);
-        W.pending.push({ t: i * 1.2, fn: () => { if (!s.dead) launchMissile('asm', s, from, dir, t, { dmg: 240 * (enemy ? D.dmg : 0.9), boost: C.small ? 0.8 : 1.5 }); } });
+        const prof = ASM_TYPE[s.cls] || 'yj83';
+        W.pending.push({ t: i * 1.2, fn: () => { if (!s.dead) launchMissile('asm', s, from, dir, t, { prof, dmg: ASM[prof].dmg * (enemy ? D.dmg : 0.9), boost: C.small ? 0.8 : 1.5 }); } });
       }
-      if (t.player) radio('CIC', `Missile launch detected from ${s.name}, bearing ${fmtBrg(bearing(t.x, t.z, s.x, s.z))}.`, 'bad');
+      if (t.player) radio('CIC', `${ASM[ASM_TYPE[s.cls] || 'yj83'].name} launch from ${s.name}, bearing ${fmtBrg(bearing(t.x, t.z, s.x, s.z))}.`, 'bad');
     }
   }
 }
@@ -3030,7 +3445,7 @@ const MISSIONS = [
       ALLIED: 'Two PLA Navy frigates crossed the median line at first light and are closing on the Penghu approaches. Turn them back the hard way: sink both. ROCS Cheng Kung is in company. Use this action to learn the fire-control system.',
       PLA: 'Two ROC Navy frigates are shadowing our exercise area east of the median line. Sink both before they report our positions. The frigate Huangshan is in company. Use this action to learn the fire-control system.',
     },
-    loadout: { msl: 8, special: 1, chaff: 4, flares: 0 },
+    loadout: { asm: 6, sam: 14, asroc: 2, special: 1, chaff: 4, flares: 0 },
     setup(A) {
       A.player(0, 0, A.toward);
       A.ally('frigate', { x: A.ex(-600), z: 1100, h: A.toward });
@@ -3053,7 +3468,7 @@ const MISSIONS = [
       ALLIED: 'Three merchant ships carrying fuel and ammunition must reach Makung harbour in the Penghu Islands. PLA missile boats and a surface group will try to stop them. Get at least two ships into the harbour.',
       PLA: 'Three merchant ships carrying fuel and stores must reach the Pingtan anchorage. ROC missile boats and a surface group will try to stop them. Get at least two ships into the anchorage.',
     },
-    loadout: { msl: 10, special: 1, chaff: 4, flares: 0 },
+    loadout: { asm: 6, sam: 18, asroc: 2, special: 1, chaff: 4, flares: 0 },
     setup(A) {
       A.islands([
         { x: 0, z: -7900, r: 2300, h: 42, seed: 3, plateau: true, basalt: true, dry: true, town: 260, light: 1.3 },
@@ -3083,7 +3498,7 @@ const MISSIONS = [
       ALLIED: 'Two Type 039A diesel submarines are hunting in the southern strait. Maritime patrol aircraft have dropped datum buoys on their last known positions. Close each datum until sonar holds contact, then kill them with ASROC (lock the sonar contact and press E). Evade torpedoes or decoy them with C.',
       PLA: 'Two Hai Kun-class submarines are hunting in the southern strait. Patrol aircraft have marked their last known positions. Close each datum until sonar holds contact, then kill them with anti-submarine rockets (lock the sonar contact and press E). Evade torpedoes or decoy them with C.',
     },
-    loadout: { msl: 10, special: 1, chaff: 5, flares: 0 },
+    loadout: { asm: 4, sam: 10, asroc: 8, special: 1, chaff: 5, flares: 0 },
     setup(A) {
       A.player(0, 0, A.toward);
       A.ally('frigate', { x: 700, z: 1600, h: A.toward });
@@ -3101,10 +3516,10 @@ const MISSIONS = [
     title: { ALLIED: 'Vampire Raid', PLA: 'Vampire Raid' },
     place: { ALLIED: 'West of Kaohsiung', PLA: 'East of Shantou' },
     brief: {
-      ALLIED: 'ROCS Panshih, the fleet\'s only fast combat support ship, is transiting under your protection. PLA naval aviation is sending strike after strike. Keep her afloat until the air cover arrives. Lock aircraft and incoming missiles and press E for surface-to-air missiles; the gun bursts its shells near aircraft and missiles.',
-      PLA: 'Chaganhu, a Type 901 fast combat support ship, is transiting under your protection. Allied strike aircraft are coming in waves. Keep her afloat until our fighters arrive. Lock aircraft and incoming missiles and press E for surface-to-air missiles; the gun bursts its shells near aircraft and missiles.',
+      ALLIED: 'ROCS Panshih, the fleet\'s only fast combat support ship, is transiting under your protection. PLA naval aviation is sending strike after strike. Keep her afloat until the air cover arrives. Automatic air defence fires SM-2s at anything aimed at her or you; save missiles by switching to manual (G), lock threats with T and fire with E. The gun bursts its shells near aircraft and missiles.',
+      PLA: 'Chaganhu, a Type 901 fast combat support ship, is transiting under your protection. Allied strike aircraft are coming in waves. Keep her afloat until our fighters arrive. Automatic air defence fires HHQ-9s at anything aimed at her or you, with HQ-10 point defence inside 4 km; save missiles by switching to manual (G), lock threats with T and fire with E. The gun bursts its shells near aircraft and missiles.',
     },
-    loadout: { msl: 16, special: 1, chaff: 5, flares: 0 },
+    loadout: { asm: 2, sam: 30, asroc: 0, special: 1, chaff: 6, flares: 0 },
     setup(A) {
       MS.limit = 270;
       const hvu = A.protect('supply', { x: 0, z: 500, h: A.away, path: [{ x: A.ex(-30000), z: 0 }], cruise: 7 });
@@ -3128,7 +3543,7 @@ const MISSIONS = [
       ALLIED: 'Under cover of darkness, a swarm of Type 022 missile boats is gathering in the lee of the island to strike the Kinmen garrison\'s supply line. Find them and sink them all. Fire star shells with F to light them up; their wakes and gun flashes give them away.',
       PLA: 'Under cover of darkness, ROC Kuang Hua VI missile boats are gathering in the lee of the island to strike our Xiamen approaches. Find them and sink them all. Fire star shells with F to light them up; their wakes and gun flashes give them away.',
     },
-    loadout: { msl: 8, special: 1, chaff: 4, flares: 8 },
+    loadout: { asm: 6, sam: 12, asroc: 2, special: 1, chaff: 4, flares: 8 },
     setup(A) {
       A.islands([
         { x: A.ex(5200), z: -3200, r: 2400, h: 55, seed: 21, town: 320, light: 0.4 },
@@ -3149,10 +3564,10 @@ const MISSIONS = [
     title: { ALLIED: 'Carrier Strike', PLA: 'Carrier Strike' },
     place: { ALLIED: 'South of the Penghu Islands', PLA: 'Bashi Channel approaches' },
     brief: {
-      ALLIED: 'The carrier Fujian is using a storm front to cover her group\'s run through the strait. Her escorts are a Type 055, a Type 052D and a frigate, and she is launching strike aircraft. Break through and sink the carrier. You have two Harpoon salvos.',
+      ALLIED: 'The carrier Fujian is using a storm front to cover her group\'s run through the strait. Her escorts are a Type 055, a Type 052D and a frigate, and she is launching strike aircraft. Break through and sink the carrier. You have two Hsiung Feng III supersonic salvos.',
       PLA: 'USS George Washington is using a storm front to cover her group\'s run north. Her escorts are destroyers and a frigate, and she is launching strike aircraft. Break through and sink the carrier. You have two DF-21D strikes.',
     },
-    loadout: { msl: 14, special: 2, chaff: 6, flares: 0 },
+    loadout: { asm: 10, sam: 24, asroc: 2, special: 2, chaff: 6, flares: 0 },
     setup(A) {
       A.player(0, 0, A.toward);
       A.ally('destroyer', { x: 900, z: 1500, h: A.toward });
@@ -3202,7 +3617,7 @@ function missionAPI(def) {
         const b = A.toward + rand(-0.5, 0.5);
         const p = new V3(t.x + fx(b) * 16000, 12, t.z + fz(b) * 16000);
         const ghost = { side: E, player: false, name: 'Over-the-horizon launcher' };
-        W.pending.push({ t: i * 1.4, fn: () => { if (!t.dead) { const m = launchMissile('asm', ghost, p, new V3(-fx(b), 0, -fz(b)), t, { dmg: 240 * DIFF[CFG.diff].dmg, boost: 0.1, speed0: 260 }); m.alt = rand(6, 10); } } });
+        W.pending.push({ t: i * 1.4, fn: () => { if (!t.dead) { const prof = E === 'PLA' ? 'yj18' : (i % 2 ? 'hf3' : 'harpoon'); const m = launchMissile('asm', ghost, p, new V3(-fx(b), 0, -fz(b)), t, { prof, dmg: ASM[prof].dmg * DIFF[CFG.diff].dmg, boost: 0.1, speed0: ASM[prof].cruise }); } } });
       }
     },
     islands(list) {
@@ -3223,6 +3638,7 @@ function clearWorld() {
   for (const g of W.islandObjs) { scene.remove(g); g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); }
   for (const k of Object.keys(W)) W[k] = [];
   [fxSmoke, fxSpray, fxFire, fxSpark].forEach(f => f.clear());
+  DEBRIS.list = [];
   for (const L of LIGHTS) { L.t = 0; L.hold = 0; L.l.intensity = 0; }
   scene.add(camera);
   PL.ship = null; PL.lock = null; PL.salvo = [];
@@ -3244,7 +3660,8 @@ function startMission(i) {
   const A = missionAPI(def);
   def.setup(A);
   const lo = def.loadout;
-  PL.msl = lo.msl; PL.special = lo.special; PL.chaff = lo.chaff; PL.flares = lo.flares; PL.chaffCd = 0; PL.gunCd = 0; PL.warned = false;
+  PL.asm = lo.asm; PL.sam = lo.sam; PL.asroc = lo.asroc; PL.pd = CFG.side === 'PLA' ? 16 : 0;
+  PL.special = lo.special; PL.chaff = lo.chaff; PL.flares = lo.flares; PL.chaffCd = 0; PL.gunCd = 0; PL.warned = false; PL.salvo = [];
   $('missionName').textContent = def.title[CFG.side];
   state = 'play';
   show('hud', true); show('title', false); show('brief', false); show('debrief', false); show('pause', false);
@@ -3392,6 +3809,7 @@ function updateWorld(dt, playing) {
   WIND.set(3 + SEA.amp * 0.8, 0, 1.5);
   fxSmoke.update(dt, WIND); fxSpray.update(dt, WIND); fxFire.update(dt, WIND); fxSpark.update(dt, WIND);
   updateLights(dt);
+  updateDebris(dt);
   // Lightning
   if (SEA.lightning) {
     lightningT -= dt;
@@ -3407,6 +3825,26 @@ function updateWorld(dt, playing) {
   }
 }
 
+// Screen position and strength of the sun (or moon) for the lens glare in the grading pass.
+const _sunV = new V3(), _camDir = new V3();
+function updateSunGlare() {
+  const night = SEA.night;
+  const dir = night ? lightDir : SKY.sunPosition.value;
+  const elev = Math.asin(clamp(dir.y / dir.length(), -1, 1));
+  const cp = camera.getWorldPosition(_v2);
+  _sunV.copy(dir).normalize().multiplyScalar(20000).add(cp);
+  camera.getWorldDirection(_camDir);
+  const front = _camDir.dot(_v.copy(dir).normalize());
+  _sunV.project(camera);
+  const onScreen = 1 - smooth(1.0, 1.35, Math.max(Math.abs(_sunV.x), Math.abs(_sunV.y)));
+  const cov = cloudMat.uniforms.coverage.value;
+  let vis = front > 0 ? onScreen * smooth(-0.02, 0.04, elev) * (1 - smooth(0.4, 0.95, cov) * 0.92) : 0;
+  if (night) vis *= 0.25;
+  if (PL.zoom > 0.5) vis *= 0.5;
+  GRADE.sunVis.value = vis;
+  GRADE.sunPos.value.set(_sunV.x * 0.5 + 0.5, _sunV.y * 0.5 + 0.5);
+  GRADE.sunCol.value.copy(sun.color).multiplyScalar(night ? 0.5 : 1);
+}
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, Math.max(0.001, (now - (frame.last || now)) / 1000));
@@ -3437,9 +3875,11 @@ function frame(now) {
   GRADE.flash.value *= Math.pow(0.001, dt);
   GRADE.time.value = TIME;
   flushTracers();
+  FLAG_T.value = TIME;
+  updateSunGlare();
   composer.render(dt);
-  if (state === 'play') updateHud(dt);
-  else octx.clearRect(0, 0, ov.width, ov.height);
+  if (state === 'play') { renderMissileCam(dt); updateHud(dt); }
+  else { $('mcam').hidden = true; octx.clearRect(0, 0, ov.width, ov.height); }
 }
 
 
@@ -3463,6 +3903,15 @@ window.addEventListener('keydown', e => {
     else if (e.code === 'KeyF') starShellKey();
     else if (e.code === 'KeyR') { radarRange = radarRange === 12000 ? 24000 : radarRange === 24000 ? 6000 : 12000; $('radarCap').textContent = `Radar ${radarRange / 1000} km · head up`; }
     else if (e.code === 'KeyZ') PL.zoomOn = !PL.zoomOn;
+    else if (e.code === 'KeyG') adModeKey();
+    else if (e.code === 'KeyJ') ecmKey();
+    else if (e.code === 'KeyB') salvoKey();
+    else if (e.code === 'KeyT') cycleTarget(e.shiftKey ? -1 : 1);
+    else if (e.code === 'KeyV') trackKey();
+    else if (e.code === 'KeyH') damageControlKey();
+    else if (e.code === 'KeyK') { PL.mcamOn = !PL.mcamOn; flashMsg(PL.mcamOn ? 'Missile camera on' : 'Missile camera off'); }
+    else if (e.code === 'BracketRight' || e.code === 'Equal') PL.zoomLevel = Math.min(ZOOMS.length - 1, PL.zoomLevel + 1);
+    else if (e.code === 'BracketLeft' || e.code === 'Minus') PL.zoomLevel = Math.max(0, PL.zoomLevel - 1);
     else if (e.code === 'Space') PL.fire = true;
     else if (e.code === 'KeyM') toggleSound();
     else if (e.code === 'KeyP' || (e.code === 'Escape' && !PL.pointer)) pause(true);
@@ -3477,12 +3926,17 @@ window.addEventListener('mousedown', e => {
   if (e.button === 0) PL.fire = true;
   if (e.button === 2) PL.zoomOn = true;
 });
+window.addEventListener('wheel', e => {
+  if (state !== 'play') return;
+  PL.zoomLevel = clamp(PL.zoomLevel + (e.deltaY < 0 ? 1 : -1), 0, ZOOMS.length - 1);
+}, { passive: true });
 window.addEventListener('mouseup', e => { if (e.button === 0) PL.fire = false; if (e.button === 2) PL.zoomOn = false; });
 window.addEventListener('mousemove', e => {
   if (state !== 'play') return;
   if (PL.pointer) {
     const k = 0.0022 * sens * (camera.fov / 68);
-    PL.yaw += e.movementX * k; PL.pitch -= e.movementY * k;
+    if (PL.track && Math.hypot(e.movementX, e.movementY) > 30) { PL.track = false; flashMsg('Free look'); }
+    if (!PL.track) { PL.yaw += e.movementX * k; PL.pitch -= e.movementY * k * (PL.invertY ? -1 : 1); }
   } else { PL.cursor.x = e.clientX / window.innerWidth; PL.cursor.y = e.clientY / window.innerHeight; }
 });
 document.addEventListener('pointerlockchange', () => {
@@ -3530,7 +3984,7 @@ function unlockPointer() { if (document.pointerLockElement) document.exitPointer
   pad.addEventListener('pointermove', e => {
     if (e.pointerId !== lid) return;
     const k = 0.005 * sens * (camera.fov / 68);
-    PL.yaw += (e.clientX - lx) * k; PL.pitch -= (e.clientY - ly) * k; lx = e.clientX; ly = e.clientY;
+    PL.yaw += (e.clientX - lx) * k; PL.pitch -= (e.clientY - ly) * k * (PL.invertY ? -1 : 1); lx = e.clientX; ly = e.clientY; PL.track = false;
   });
   const lend = e => { if (e.pointerId === lid) lid = null; };
   pad.addEventListener('pointerup', lend); pad.addEventListener('pointercancel', lend);
@@ -3541,6 +3995,7 @@ function unlockPointer() { if (document.pointerLockElement) document.exitPointer
   $('tSpec').addEventListener('pointerdown', fireSpecialKey);
   $('tChaff').addEventListener('pointerdown', chaffKey);
   $('tZoom').addEventListener('pointerdown', () => { PL.zoomOn = !PL.zoomOn; $('tZoom').classList.toggle('on', PL.zoomOn); });
+  $('tTgt').addEventListener('pointerdown', () => cycleTarget(1));
   $('tPause').addEventListener('pointerdown', () => pause(true));
 })();
 
@@ -3585,7 +4040,7 @@ function openBrief(i) {
   const ps = PLAYER_SHIP[CFG.side];
   const lo = m.loadout;
   $('bShip').textContent = `${ps.name} (${ps.no}), ${CLASS[ps.cls].label}`;
-  $('bLoad').textContent = `${lo.msl} missiles · ${lo.special} ${CFG.side === 'ALLIED' ? 'Harpoon salvo' : 'DF-21D strike'}${lo.special > 1 ? 's' : ''} · ${lo.chaff} decoy loads${lo.flares ? ` · ${lo.flares} star shells` : ''}`;
+  $('bLoad').textContent = `${lo.asm} ${ASM[PLAYER_ASM[CFG.side]].name} · ${lo.sam} ${SAM_NAME[CFG.side]}${CFG.side === 'PLA' ? ' · 16 HQ-10' : ''}${lo.asroc ? ` · ${lo.asroc} ASROC` : ''} · ${lo.special} ${SPECIAL_NAME[CFG.side]}${lo.special > 1 ? 's' : ''} · ${lo.chaff} decoy loads · jammer${lo.flares ? ` · ${lo.flares} star shells` : ''}`;
   show('title', false); show('debrief', false); show('pause', false); show('brief', true);
   $('bBegin').focus();
 }
@@ -3607,6 +4062,7 @@ $('dbNext').addEventListener('click', () => openBrief(MS.idx + 1));
 $('dbRetry').addEventListener('click', () => openBrief(MS.idx));
 $('dbMenu').addEventListener('click', toMenu);
 $('sens').value = sens;
+$('invY').addEventListener('change', e => { PL.invertY = e.target.checked; });
 $('sens').addEventListener('input', e => { sens = parseFloat(e.target.value); try { localStorage.setItem('straitfire3d-sens', String(sens)); } catch (err) { /* storage blocked */ } });
 document.querySelectorAll('input[name="side"]').forEach(r => r.addEventListener('change', () => {
   CFG.side = r.value; document.body.dataset.side = r.value; renderMissionList(); startAttract();
@@ -3622,6 +4078,7 @@ document.querySelectorAll('input[name="diff"]').forEach(r => r.addEventListener(
     makeTextures();
     makeMaterials();
     makeFX();
+    makeDebris();
     buildRanges();
     resize();
     CFG.side = document.querySelector('input[name="side"]:checked').value;
@@ -3661,7 +4118,9 @@ function simulate(seconds, auto = true) {
         PL.keys.KeyA = false; PL.keys.KeyD = false;
       }
       if (W.missiles.some(m => m.target === s) && Math.random() < dt / 4) chaffKey();
-      const mp = MS.waypoints[0];
+      if (W.missiles.some(m => m.target === s && m.p.distanceTo(s.pos) < 9000) && PL.ecmCd <= 0) ecmKey();
+      if (Object.values(PL.sys).some(v => v < 50) && PL.dcCd <= 0) damageControlKey();
+      const mp = MS.waypoints[0] || (!W.ships.some(o => o.isSub && o.detected && !o.dead) && W.datums.find(d => !d.sub.dead));
       if (mp) { const b = wrapPi(bearing(s.x, s.z, mp.x, mp.z) - s.h); PL.rudder = clamp(b, -1, 1) * (Math.hypot(mp.x - s.x, mp.z - s.z) > 2500 ? 1 : 0); }
     }
     updateWorld(dt, true); updateMission(dt);

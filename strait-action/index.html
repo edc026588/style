@@ -61,7 +61,7 @@ kbd { font: 500 10px var(--mono); border: 1px solid var(--rule); border-radius: 
 .crosshair::before { left: 0; right: 0; top: 14px; height: 2px; clip-path: polygon(0 0, 38% 0, 38% 100%, 0 100%, 0 0, 62% 0, 100% 0, 100% 100%, 62% 100%); }
 .crosshair::after { top: 0; bottom: 0; left: 14px; width: 2px; clip-path: polygon(0 0, 100% 0, 100% 38%, 0 38%, 0 62%, 100% 62%, 100% 100%, 0 100%); }
 body.cursor-aim .crosshair { display: none; }
-.alert { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); font: 600 14px var(--mono); letter-spacing: .06em; padding: 6px 14px; border-radius: 3px; background: var(--panel); border: 1px solid var(--rule); white-space: nowrap; max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }
+.alert { position: absolute; left: 50%; top: 40%; transform: translateX(-50%); font: 600 14px var(--mono); letter-spacing: .06em; padding: 6px 14px; border-radius: 3px; background: var(--panel); border: 1px solid var(--rule); white-space: nowrap; max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }
 .alert.red { color: #fff; background: rgba(160, 24, 14, 0.82); border-color: var(--bad); animation: blink .8s steps(2) infinite; }
 @keyframes blink { 50% { opacity: .55; } }
 .radio { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); transform: translateX(-50%); width: min(560px, calc(100vw - 560px)); min-width: 280px; list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
@@ -102,7 +102,31 @@ body.cursor-aim .crosshair { display: none; }
   .radar canvas { width: 140px; height: 140px; }
   .status { width: 200px; }
   .obj { width: 46vw; font-size: 12px; }
+  .threats { width: 220px; top: calc(env(safe-area-inset-top, 0px) + 60px); }
+  .mcam { top: auto; bottom: 230px; }
 }
+
+.threats { position: absolute; right: 14px; top: calc(env(safe-area-inset-top, 0px) + 74px); width: 300px; }
+.threats ol { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 3px; }
+.threats li { display: grid; grid-template-columns: minmax(0, 1.2fr) auto auto; grid-template-areas: "n b t" "s s s"; gap: 0 10px; font: 500 11.5px var(--mono); padding: 3px 0; border-top: 1px solid var(--rule); }
+.threats li b { grid-area: n; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.threats li span:nth-of-type(1) { grid-area: b; color: var(--muted); }
+.threats li span:nth-of-type(2) { grid-area: t; text-align: right; }
+.threats li em { grid-area: s; font-style: normal; color: var(--muted); font-size: 10.5px; }
+.threats li.crit b, .threats li.crit span:nth-of-type(2) { color: var(--bad); }
+.sys { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; border-top: 1px solid var(--rule); padding-top: 6px; }
+.sys span { font: 600 10px var(--mono); letter-spacing: .06em; padding: 2px 5px; border-radius: 2px; border: 1px solid currentColor; }
+.sys span.ok { color: var(--ok); }
+.sys span.warn { color: var(--warn); }
+.sys span.bad { color: #fff; background: var(--bad); border-color: var(--bad); }
+.sys span.fix { animation: blink .8s steps(2) infinite; }
+.sys em { font: 500 10.5px var(--mono); font-style: normal; color: var(--muted); margin-left: auto; }
+.mcam { position: absolute; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 66px); transform: translateX(-50%); width: min(360px, 36vw); aspect-ratio: 16 / 9; border: 1px solid rgba(226,236,241,.55); border-radius: 3px; box-shadow: 0 0 0 1px rgba(0,0,0,.4); }
+.mcam span { position: absolute; left: 6px; bottom: 5px; right: 30px; font: 500 10.5px var(--mono); color: #fff; text-shadow: 0 1px 2px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcam kbd { position: absolute; right: 5px; bottom: 4px; }
+.mcam::before { content: "MISSILE CAM"; position: absolute; left: 6px; top: 4px; font: 600 10px var(--mono); letter-spacing: .12em; color: #ffd166; text-shadow: 0 1px 2px #000; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.controls.compact { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); font-size: 12px; }
 
 /* ---------- Touch controls ---------- */
 .touch { position: fixed; inset: 0; pointer-events: none; }
@@ -185,6 +209,8 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
   <div class="obj hbox"><p class="eyebrow" id="missionName"></p><ul id="objList"></ul></div>
   <div class="compass hbox"><canvas id="compass" width="1040" height="76"></canvas></div>
   <div class="clock hbox" id="clock"></div>
+  <div class="threats hbox" id="threats" hidden><p class="eyebrow">Air picture · <span id="aawMode"></span></p><ol id="threatList"></ol></div>
+  <div class="mcam" id="mcam" hidden><span id="mcamCap"></span><kbd>K</kbd></div>
   <div class="crosshair" id="crosshair"></div>
   <div class="alert" id="alert" hidden></div>
   <ol class="radio" id="radio"></ol>
@@ -197,6 +223,7 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
     <div class="row"><span>Rudder <kbd>A</kbd><kbd>D</kbd></span><b id="rudTxt"></b></div>
     <div class="rudder" aria-hidden="true"><i id="rud"></i></div>
     <div class="weapons" id="weapons"></div>
+    <div class="sys" id="sys"></div>
   </div>
   <div class="binos" id="binos" hidden>
     <svg viewBox="0 0 400 200" fill="none" stroke="#e6f0f4" stroke-width="1.2">
@@ -207,7 +234,7 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
         <line x1="195" y1="70" x2="205" y2="70"/><line x1="195" y1="130" x2="205" y2="130"/>
       </g>
     </svg>
-    <span>7× 50 · mil scale</span>
+    <span id="zoomTxt">7× · mil scale</span>
   </div>
 </div>
 
@@ -217,8 +244,9 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
   <div class="tbtns">
     <button class="tbtn" id="tZoom" type="button">ZOOM</button>
     <button class="tbtn" id="tChaff" type="button">CHAFF</button>
-    <button class="tbtn" id="tPause" type="button">PAUSE</button>
+    <button class="tbtn" id="tTgt" type="button">TARGET</button>
     <button class="tbtn" id="tSpec" type="button">SPECIAL</button>
+    <button class="tbtn" id="tPause" type="button">PAUSE</button>
     <button class="tbtn" id="tMsl" type="button">MISSILE</button>
     <button class="tbtn big" id="tFire" type="button">GUN</button>
   </div>
@@ -236,9 +264,9 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
         <fieldset>
           <legend>Side</legend>
           <div class="choice"><input type="radio" name="side" id="s-allied" value="ALLIED" checked>
-            <label for="s-allied"><span class="tag" style="color:var(--allied)">ROC · US · JP</span><strong>Allied Coalition</strong><span>ROCS Kee Lung (DDG-1801), Kidd-class destroyer. Special: Harpoon salvo.</span></label></div>
+            <label for="s-allied"><span class="tag" style="color:var(--allied)">ROC · US · JP</span><strong>Allied Coalition</strong><span>ROCS Kee Lung (DDG-1801), Kidd-class destroyer. SM-2, Harpoon, twin Phalanx. Special: Hsiung Feng III supersonic salvo.</span></label></div>
           <div class="choice"><input type="radio" name="side" id="s-pla" value="PLA">
-            <label for="s-pla"><span class="tag" style="color:var(--pla)">PRC</span><strong>PLA Navy</strong><span>Nanchang (101), Type 055 destroyer. Special: DF-21D ballistic strike.</span></label></div>
+            <label for="s-pla"><span class="tag" style="color:var(--pla)">PRC</span><strong>PLA Navy</strong><span>Nanchang (101), Type 055 destroyer. HHQ-9, YJ-18, HQ-10. Special: DF-21D ballistic strike.</span></label></div>
         </fieldset>
         <fieldset>
           <legend>Difficulty</legend>
@@ -256,16 +284,22 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
     <dl class="controls">
       <div><dt>Look, aim</dt><dd>Mouse</dd></div>
       <div><dt>Main gun</dt><dd>Hold left click</dd></div>
-      <div><dt>Binoculars</dt><dd>Hold right click · Z</dd></div>
+      <div><dt>Zoom 1× to 12×</dt><dd>Wheel · hold right click</dd></div>
       <div><dt>Engine telegraph</dt><dd>W · S</dd></div>
       <div><dt>Rudder</dt><dd>A · D</dd></div>
+      <div><dt>Next target, previous</dt><dd>T · Shift T</dd></div>
+      <div><dt>Track locked target</dt><dd>V</dd></div>
       <div><dt>Missile at locked target</dt><dd>E</dd></div>
+      <div><dt>Salvo size 1, 2, 4</dt><dd>B</dd></div>
+      <div><dt>Air defence auto, manual</dt><dd>G</dd></div>
       <div><dt>Special weapon</dt><dd>Q</dd></div>
       <div><dt>Chaff and decoys</dt><dd>C</dd></div>
+      <div><dt>Jammer</dt><dd>J</dd></div>
+      <div><dt>Repair party</dt><dd>H</dd></div>
+      <div><dt>Missile camera</dt><dd>K</dd></div>
       <div><dt>Star shell (night)</dt><dd>F</dd></div>
       <div><dt>Radar range</dt><dd>R</dd></div>
-      <div><dt>Pause</dt><dd>Esc · P</dd></div>
-      <div><dt>Sound</dt><dd>M</dd></div>
+      <div><dt>Pause · sound</dt><dd>Esc, P · M</dd></div>
     </dl>
     <p class="foot">Prefer the original top-down version? <a href="arcade.html">Play Strait Fire Arcade</a>.</p>
   </div>
@@ -289,6 +323,27 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
   <div class="card narrow">
     <div><p class="eyebrow">Paused</p><h2>All stop</h2></div>
     <label class="slider" for="sens">Mouse sensitivity<input type="range" id="sens" min="0.3" max="2.5" step="0.05"></label>
+    <label class="check" for="invY"><input type="checkbox" id="invY"> Invert mouse vertical</label>
+    <dl class="controls compact">
+      <div><dt>Look, aim</dt><dd>Mouse</dd></div>
+      <div><dt>Main gun</dt><dd>Hold left click</dd></div>
+      <div><dt>Zoom 1× to 12×</dt><dd>Wheel · hold right click</dd></div>
+      <div><dt>Engine telegraph</dt><dd>W · S</dd></div>
+      <div><dt>Rudder</dt><dd>A · D</dd></div>
+      <div><dt>Next target, previous</dt><dd>T · Shift T</dd></div>
+      <div><dt>Track locked target</dt><dd>V</dd></div>
+      <div><dt>Missile at locked target</dt><dd>E</dd></div>
+      <div><dt>Salvo size 1, 2, 4</dt><dd>B</dd></div>
+      <div><dt>Air defence auto, manual</dt><dd>G</dd></div>
+      <div><dt>Special weapon</dt><dd>Q</dd></div>
+      <div><dt>Chaff and decoys</dt><dd>C</dd></div>
+      <div><dt>Jammer</dt><dd>J</dd></div>
+      <div><dt>Repair party</dt><dd>H</dd></div>
+      <div><dt>Missile camera</dt><dd>K</dd></div>
+      <div><dt>Star shell (night)</dt><dd>F</dd></div>
+      <div><dt>Radar range</dt><dd>R</dd></div>
+      <div><dt>Pause · sound</dt><dd>Esc, P · M</dd></div>
+    </dl>
     <div class="actions">
       <button class="btn primary" id="pResume" type="button">Resume</button>
       <button class="btn" id="pRestart" type="button">Restart mission</button>
