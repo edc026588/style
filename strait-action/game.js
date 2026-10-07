@@ -2227,7 +2227,7 @@ function modelFor(cls, no, player = false, side = 'PLA') {
 /* ------------------------------------------------------------------ */
 const W = { ships: [], jets: [], missiles: [], shells: [], rounds: [], torps: [], flares: [], chaff: [], islands: [], islandObjs: [], datums: [], pending: [], helo: null };
 let TIME = 0;
-let CFG = { side: 'ALLIED', diff: 'veteran' };
+let CFG = { side: 'ALLIED', diff: 'veteran', capture: true };
 const hostile = (a, b) => a.side !== b.side;
 
 function landAt(x, z) {
@@ -4576,14 +4576,16 @@ window.addEventListener('keydown', e => {
     else if (e.code === 'BracketLeft' || e.code === 'Minus') PL.zoomLevel = Math.max(0, PL.zoomLevel - 1);
     else if (e.code === 'Space') PL.fire = true;
     else if (e.code === 'KeyM') toggleSound();
-    else if (e.code === 'KeyP' || (e.code === 'Escape' && !PL.pointer)) pause(true);
+    else if (e.code === 'KeyP' || e.code === 'Escape') { e.preventDefault(); pause(true); }
   } else if (state === 'paused' && e.code === 'KeyP') pause(false);
 });
 window.addEventListener('keyup', e => { PL.keys[e.code] = false; if (e.code === 'Space') PL.fire = false; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 $('overlay').addEventListener('contextmenu', e => e.preventDefault());
 window.addEventListener('mousedown', e => {
-  if (state !== 'play' || e.target.closest('button, input, label, .screen')) return;
+  if (state !== 'play' || e.target.closest('button, input, label, select, .screen')) return;
+  // Middle click or the mouse's back/forward buttons: pause and free the mouse without the keyboard
+  if (e.button === 1 || e.button === 3 || e.button === 4) { e.preventDefault(); pause(true); return; }
   if (!PL.pointer && !PL.touch && e.button === 0 && PL.wantLock && !PL.lockTried) { PL.lockTried = true; lockPointer(); }
   if (e.button === 0) PL.fire = true;
   if (e.button === 2) PL.zoomOn = true;
@@ -4604,13 +4606,27 @@ window.addEventListener('mousemove', e => {
 document.addEventListener('pointerlockchange', () => {
   const was = PL.pointer;
   PL.pointer = document.pointerLockElement === canvas;
+  if (!was && PL.pointer) showLockHint();
   if (was && !PL.pointer && state === 'play') pause(true);
 });
+// Each time the mouse is captured, say how to get it back
+let lockHintT = 0;
+function showLockHint() {
+  const el = $('lockHint'); el.hidden = false; el.classList.remove('fade');
+  clearTimeout(lockHintT);
+  lockHintT = setTimeout(() => { el.classList.add('fade'); lockHintT = setTimeout(() => { el.hidden = true; }, 900); }, 5000);
+}
 window.addEventListener('blur', () => { PL.fire = false; PL.keys = {}; if (state === 'play') pause(true); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') pause(true); });
 
 function lockPointer() {
   if (PL.touch) return;
+  if (!CFG.capture) {
+    // Free cursor: the mouse aims, and the view turns when it nears the screen edge
+    PL.wantLock = false;
+    if (state === 'play' && !PL.cursorTold) { PL.cursorTold = true; PL.cursor.x = 0.5; PL.cursor.y = 0.5; flashMsg('Mouse aims the crosshair. Push it to the screen edge to turn your view.'); }
+    return;
+  }
   PL.wantLock = true;
   try {
     const r = canvas.requestPointerLock();
@@ -4623,7 +4639,10 @@ function lockPointer() {
     }
   }, 700);
 }
-function unlockPointer() { if (document.pointerLockElement) document.exitPointerLock(); }
+function unlockPointer() {
+  clearTimeout(lockHintT); $('lockHint').hidden = true;
+  if (document.pointerLockElement) document.exitPointerLock();
+}
 
 // Touch: a stick for helm and engines, drag the right side to look, buttons for weapons
 (function touchSetup() {
@@ -4725,6 +4744,17 @@ $('dbRetry').addEventListener('click', () => openBrief(MS.idx));
 $('dbMenu').addEventListener('click', toMenu);
 $('sens').value = sens;
 $('invY').addEventListener('change', e => { PL.invertY = e.target.checked; });
+// Mouse capture can be switched off for hosts where a captured pointer is awkward
+try { CFG.capture = localStorage.getItem('straitfire3d-capture') !== '0'; } catch (e) { CFG.capture = true; }
+document.querySelectorAll('.capChk').forEach(c => {
+  c.checked = CFG.capture;
+  c.addEventListener('change', () => {
+    CFG.capture = c.checked;
+    document.querySelectorAll('.capChk').forEach(o => (o.checked = CFG.capture));
+    try { localStorage.setItem('straitfire3d-capture', CFG.capture ? '1' : '0'); } catch (err) { /* storage blocked */ }
+    if (!CFG.capture) unlockPointer();
+  });
+});
 $('sens').addEventListener('input', e => { sens = parseFloat(e.target.value); try { localStorage.setItem('straitfire3d-sens', String(sens)); } catch (err) { /* storage blocked */ } });
 document.querySelectorAll('input[name="side"]').forEach(r => r.addEventListener('change', () => {
   CFG.side = r.value; document.body.dataset.side = r.value; renderMissionList(); startAttract();

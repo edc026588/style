@@ -126,6 +126,9 @@ body.cursor-aim .crosshair { display: none; }
 .mcam kbd { position: absolute; right: 5px; bottom: 4px; }
 .mcam::before { content: "MISSILE CAM"; position: absolute; left: 6px; top: 4px; font: 600 10px var(--mono); letter-spacing: .12em; color: #ffd166; text-shadow: 0 1px 2px #000; }
 .check { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.lockhint { position: absolute; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 64px); transform: translateX(-50%); font: 500 12px var(--mono); padding: 6px 12px; border-radius: 3px; background: var(--panel); border: 1px solid var(--rule); white-space: nowrap; max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; transition: opacity .8s; }
+.lockhint kbd { color: var(--ink); }
+.lockhint.fade { opacity: 0; }
 .controls.compact { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); font-size: 12px; }
 
 /* ---------- Touch controls ---------- */
@@ -215,6 +218,7 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
   <div class="mcam" id="mcam" hidden><span id="mcamCap"></span><kbd>K</kbd></div>
   <div class="crosshair" id="crosshair"></div>
   <div class="alert" id="alert" hidden></div>
+  <div class="lockhint" id="lockHint" hidden>Mouse captured for aiming · <kbd>Esc</kbd> <kbd>P</kbd> or middle-click to pause and free it</div>
   <ol class="radio" id="radio"></ol>
   <div class="radar hbox"><canvas id="radar" width="420" height="420"></canvas><span class="cap" id="radarCap">Radar 12 km · head up</span></div>
   <div class="status hbox">
@@ -277,6 +281,7 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
             <div class="choice"><input type="radio" name="diff" id="d-vet" value="veteran" checked><label for="d-vet"><strong>Veteran</strong><span>Salvos that walk onto you.</span></label></div>
           </div>
         </fieldset>
+        <label class="check" for="capTitle"><input type="checkbox" id="capTitle" class="capChk" checked> Capture the mouse for aiming (Esc, P or middle-click frees it)</label>
         <label class="slider" for="gfxTitle">Graphics<select id="gfxTitle" class="gfxSel"><option value="auto">Auto</option><option value="ultra">Ultra</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
       </div>
       <fieldset>
@@ -303,7 +308,7 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
       <div><dt>Missile camera</dt><dd>K</dd></div>
       <div><dt>Star shell (night)</dt><dd>F</dd></div>
       <div><dt>Radar range</dt><dd>R</dd></div>
-      <div><dt>Pause · sound</dt><dd>Esc, P · M</dd></div>
+      <div><dt>Pause, free the mouse · sound</dt><dd>Esc, P, middle-click · M</dd></div>
     </dl>
     <p class="foot">Prefer the original top-down version? <a href="arcade.html">Play Strait Fire Arcade</a>.</p>
   </div>
@@ -319,15 +324,16 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
     <p class="brieftext" id="bText"></p>
     <dl class="kv"><dt>Ship</dt><dd id="bShip"></dd><dt>Loadout</dt><dd id="bLoad"></dd></dl>
     <div class="actions"><button class="btn primary" id="bBegin" type="button">Battle stations</button><button class="btn" id="bBack" type="button">Back</button></div>
-    <p class="foot">Click inside the game to capture the mouse. Esc releases it and pauses.</p>
+    <p class="foot">The mouse is captured for aiming. Esc, P or a middle-click pauses the game and frees it.</p>
   </div>
 </section>
 
 <section class="screen" id="pause" hidden>
   <div class="card narrow">
-    <div><p class="eyebrow">Paused</p><h2>All stop</h2></div>
+    <div><p class="eyebrow">Paused · mouse released</p><h2>All stop</h2></div>
     <label class="slider" for="sens">Mouse sensitivity<input type="range" id="sens" min="0.3" max="2.5" step="0.05"></label>
     <label class="check" for="invY"><input type="checkbox" id="invY"> Invert mouse vertical</label>
+    <label class="check" for="capPause"><input type="checkbox" id="capPause" class="capChk" checked> Capture the mouse for aiming. Off: the cursor stays visible and aims; push it to the screen edge to turn.</label>
     <label class="slider" for="gfxPause">Graphics<select id="gfxPause" class="gfxSel"><option value="auto">Auto</option><option value="ultra">Ultra</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
     <dl class="controls compact">
       <div><dt>Look, aim</dt><dd>Mouse</dd></div>
@@ -348,7 +354,7 @@ legend { font: 500 11px/1.3 var(--mono); letter-spacing: .14em; text-transform: 
       <div><dt>Missile camera</dt><dd>K</dd></div>
       <div><dt>Star shell (night)</dt><dd>F</dd></div>
       <div><dt>Radar range</dt><dd>R</dd></div>
-      <div><dt>Pause · sound</dt><dd>Esc, P · M</dd></div>
+      <div><dt>Pause, free the mouse · sound</dt><dd>Esc, P, middle-click · M</dd></div>
     </dl>
     <div class="actions">
       <button class="btn primary" id="pResume" type="button">Resume</button>
