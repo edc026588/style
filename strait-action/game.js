@@ -63,10 +63,10 @@ const canvas = $('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
 // Graphics presets. 'auto' starts at High (Medium on phones and tablets) and steps down if the frame rate sags.
 const GFX = {
-  ultra: { label: 'Ultra', pr: 2, shadow: 4096, water: 1024, msaa: 4, bloom: true },
-  high: { label: 'High', pr: 1.5, shadow: 2048, water: 512, msaa: 4, bloom: true },
-  medium: { label: 'Medium', pr: 1, shadow: 1024, water: 256, msaa: 2, bloom: true },
-  low: { label: 'Low', pr: 0.75, shadow: 0, water: 256, msaa: 0, bloom: false },
+  ultra: { label: 'Ultra', pr: 2, shadow: 4096, water: 1024, msaa: 4, bloom: true, shafts: 1 },
+  high: { label: 'High', pr: 1.5, shadow: 2048, water: 512, msaa: 4, bloom: true, shafts: 1 },
+  medium: { label: 'Medium', pr: 1, shadow: 1024, water: 256, msaa: 2, bloom: true, shafts: 0.8 },
+  low: { label: 'Low', pr: 0.75, shadow: 0, water: 256, msaa: 0, bloom: false, shafts: 0 },
 };
 const GFX_ORDER = ['ultra', 'high', 'medium', 'low'];
 const GFX_STATE = { mode: 'auto', level: window.matchMedia('(pointer: coarse)').matches ? 'medium' : 'high' };
@@ -98,11 +98,12 @@ const GradeShader = {
     scope: { value: 0 }, damage: { value: 0 }, flash: { value: 0 }, grain: { value: 0.03 },
     vignette: { value: 0.95 }, aberr: { value: 0.006 }, night: { value: 0 }, wet: { value: 0 },
     sunPos: { value: new THREE.Vector2(0.5, 0.5) }, sunVis: { value: 0 }, sunCol: { value: new THREE.Color(1, 0.9, 0.7) },
+    shafts: { value: 1 },
   },
   vertexShader: /* glsl */`varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse; uniform float time, scope, damage, flash, grain, vignette, aberr, night, wet; uniform vec2 res;
-    uniform vec2 sunPos; uniform float sunVis; uniform vec3 sunCol;
+    uniform vec2 sunPos; uniform float sunVis, shafts; uniform vec3 sunCol;
     varying vec2 vUv;
     float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
@@ -132,6 +133,19 @@ const GradeShader = {
           gl += sunCol * vec3(0.5, 0.8, 1.0) * 0.025 * smoothstep(0.05 + 0.025 * float(i), 0.0, gd);
         }
         col += gl * sunVis;
+        // Crepuscular rays: march toward the sun gathering bright sky, so masts, smoke and cloud edges cut dark lanes
+        if (shafts > 0.0) {
+          vec2 dl = (sunPos - vUv) / 24.0;
+          vec2 q = vUv + dl * h(vUv * res + fract(time) * 31.0);
+          float acc = 0.0, wgt = 1.0;
+          for (int i = 0; i < 24; i++) {
+            q += dl;
+            float b = max(dot(texture2D(tDiffuse, q).rgb, vec3(0.299, 0.587, 0.114)) - 0.62, 0.0);
+            acc += b * wgt * exp(-length((q - sunPos) * vec2(res.x / res.y, 1.0)) * 5.0);
+            wgt *= 0.96;
+          }
+          col += sunCol * acc * shafts * sunVis * 0.045;
+        }
       }
       // Gentle filmic contrast and saturation
       col = mix(col, col * col * (3.0 - 2.0 * col), 0.16);
@@ -163,6 +177,7 @@ composer.addPass(new OutputPass());
 const gradePass = new ShaderPass(GradeShader);
 composer.addPass(gradePass);
 const GRADE = gradePass.uniforms;
+GRADE.shafts.value = gfxNow().shafts;
 
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
@@ -519,6 +534,7 @@ const ENV = {
   overcast: { elev: 36,  azim: 205, turb: 12, ray: 0.7, mie: 0.02, mieG: 0.7, exp: 0.42, fogD: 0.0001, clouds: 0.94, dark: 0.75, sea: 5, water: 0x0d2a31, sunCol: 0xd6dbe0, sunI: 0.8, light: 0.72, dist: 4.2, rain: 0.35 },
   haze:     { elev: 19,  azim: 238, turb: 10, ray: 1.6, mie: 0.012, mieG: 0.85, exp: 0.33, fogD: 0.000062, clouds: 0.2, dark: 0.1, sea: 3, water: 0x0f3640, sunCol: 0xffe0b4, sunI: 2.8, light: 0.92, dist: 3.4 },
   night:    { elev: -16, azim: 300, moonElev: 26, moonAzim: 140, turb: 2, ray: 0.6, mie: 0.003, mieG: 0.8, exp: 1.35, fogD: 0.00005, clouds: 0.24, dark: 0.4, sea: 2, water: 0x020a0e, sunCol: 0x9fb6dc, sunI: 0.45, light: 0.12, dist: 3.0, stars: 1, night: 1 },
+  squall:   { elev: 10,  azim: 250, turb: 8, ray: 1.5, mie: 0.011, mieG: 0.84, exp: 0.44, fogD: 0.00006, clouds: 0.68, dark: 0.45, sea: 4.5, water: 0x0b2d37, sunCol: 0xffc890, sunI: 1.9, light: 0.66, dist: 4.4, rain: 0.12 },
   storm:    { elev: 6,   azim: 262, turb: 9, ray: 1.1, mie: 0.02, mieG: 0.7, exp: 0.55, fogD: 0.00016, clouds: 0.97, dark: 0.85, sea: 6, water: 0x0a2125, sunCol: 0xc9a07a, sunI: 0.55, light: 0.45, dist: 5.0, rain: 1, lightning: 1 },
 };
 const SEA = { amp: 2, light: 1, night: 0, rain: 0, lightning: 0, preset: null };
@@ -2791,6 +2807,7 @@ function spawnJet(side, kind, x, z, h, target) {
 function killJet(j, by) {
   if (j.dead) return;
   j.dead = true;
+  if (j === W.helo && PL.dmgBy) PL.dmgBy['helo:' + (by ? by.cls || by.kind || by.name || '?' : '-')] = 1;
   fxExplosion(j.p.x, j.p.y, j.p.z, 0.9, 1.2);
   W.pending.push({ t: 0, life: 6, p: j.p.clone(), v: new V3(j.vx * 0.5, -10, j.vz * 0.5), fall: true });
   onJetKilled(j, by);
@@ -2949,7 +2966,7 @@ function setupPlayer(side, x, z, h) {
   const ps = PLAYER_SHIP[side];
   const s = spawnShip(ps.cls, side, { player: true, name: ps.name, no: ps.no, x, z, h, speed: CLASS[ps.cls].speed * 0.8, hpMul: 1000 / CLASS[ps.cls].hp, priority: 1.25 });
   s.order = s.speed;
-  PL.ship = s; PL.side = side; PL.dmgBy = {}; PL.shellHits = []; PL.tipEvade = false; PL.yaw = 0; PL.pitch = -0.07; PL.telegraph = 5; PL.rudder = 0; PL.lock = null; PL.dmg = 0; PL.shake = 0;
+  PL.ship = s; PL.side = side; PL.dmgBy = {}; PL.shellHits = []; PL.tipEvade = false; PL.lightOn = false; PL.lightTold = false; PL.yaw = 0; PL.pitch = -0.07; PL.telegraph = 5; PL.rudder = 0; PL.lock = null; PL.dmg = 0; PL.shake = 0;
   PL.stats = { shells: 0, hits: 0, msl: 0, kills: 0, air: 0, intercepts: 0 };
   PL.sys = { gun: 100, radar: 100, launchers: 100, engines: 100, steering: 100 };
   PL.dcT = 0; PL.dcCd = 0; PL.ecmT = 0; PL.ecmCd = 0; PL.samCd = 0; PL.pdCd = 0; PL.lockManual = false; PL.track = false; PL.mcamM = null; PL.mcamHold = 0; PL.zoomLevel = 0; PL.zoomF = 1;
@@ -3007,6 +3024,71 @@ function updatePlayerControls(dt) {
 }
 
 const ZOOMS = [1, 2.5, 6, 12];
+
+/* Searchlight (N): a narrow beam from above the bridge that follows your aim. At night it lights up
+   targets for you, and shows their gunners exactly where you are. */
+const SEARCH = (() => {
+  const spot = new THREE.SpotLight(0xe6eeff, 0, 9000, 0.045, 0.45, 2);
+  spot.castShadow = false;
+  scene.add(spot, spot.target);
+  const len = 2600, r = len * Math.tan(0.05);
+  const g = new THREE.CylinderGeometry(0.7, r, len, 32, 8, true).translate(0, -len / 2, 0).rotateX(-Math.PI / 2);
+  const m = new THREE.ShaderMaterial({
+    uniforms: { k: { value: 0 }, len: { value: len }, fogDensity: FOG_U.density },
+    vertexShader: /* glsl */`
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      uniform float len, fogDensity; varying float vZ, vFog; varying vec3 vN, vW;
+      void main(){
+        vZ = position.z / len;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vW = wp.xyz; vN = normalize(mat3(modelMatrix) * normal);
+        vec4 mv = viewMatrix * wp; gl_Position = projectionMatrix * mv;
+        #include <logdepthbuf_vertex>
+        float d = -mv.z; vFog = 1.0 - exp(-fogDensity * fogDensity * d * d);
+      }`,
+    fragmentShader: /* glsl */`
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      uniform float k; varying float vZ, vFog; varying vec3 vN, vW;
+      void main(){
+        #include <logdepthbuf_fragment>
+        // Brightest where we look through the most lit air, fading along the beam and into the haze
+        float face = abs(dot(normalize(vN), normalize(cameraPosition - vW)));
+        float a = k * pow(face, 1.4) * pow(1.0 - vZ, 1.7) * smoothstep(0.0, 0.006, vZ) * (1.0 - vFog);
+        gl_FragColor = vec4(vec3(0.85, 0.9, 1.0) * a, 1.0);
+      }`,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+  });
+  const beam = new THREE.Mesh(g, m);
+  beam.frustumCulled = false; beam.renderOrder = 6; beam.visible = false;
+  beam.layers.set(1);
+  scene.add(beam);
+  return { spot, beam, level: 0, dir: new V3(0, 0, -1), o: new V3(), t: new V3() };
+})();
+function updateSearchlight(dt) {
+  const on = PL.lightOn && PL.ship && !PL.ship.dead && state === 'play';
+  SEARCH.level = lerp(SEARCH.level, on ? 1 : 0, clamp(dt * 6, 0, 1));
+  const lv = SEARCH.level;
+  SEARCH.spot.intensity = lv * 1.0e7;
+  SEARCH.beam.visible = lv > 0.01;
+  if (lv < 0.01) return;
+  const o = camera.getWorldPosition(SEARCH.o); o.y += 4;
+  SEARCH.dir.lerp(PL.aimRay.direction, clamp(dt * 8, 0, 1)).normalize();
+  SEARCH.spot.position.copy(o);
+  SEARCH.spot.target.position.copy(o).addScaledVector(SEARCH.dir, 200);
+  SEARCH.spot.target.updateMatrixWorld();
+  SEARCH.beam.position.copy(o);
+  SEARCH.beam.lookAt(SEARCH.t.copy(o).add(SEARCH.dir));
+  SEARCH.beam.material.uniforms.k.value = lv * (0.006 + SEA.night * 0.05 + SEA.rain * 0.04) * (SEA.night ? 1 : 1 - SEA.light * 0.6);
+}
+function lightKey() {
+  const s = PL.ship; if (!s || s.dead || state !== 'play') return;
+  PL.lightOn = !PL.lightOn;
+  sfx('blip', 1, 0, PL.lightOn ? 660 : 440);
+  if (PL.lightOn && SEA.night && !PL.lightTold) { PL.lightTold = true; radio('Navigator', 'Searchlight on. It lights them up for us, and shows their gunners exactly where we are.', 'tip'); }
+  else flashMsg(PL.lightOn ? 'Searchlight on' : 'Searchlight off');
+}
 const _v3 = new V3();
 const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion(), _ea = new THREE.Euler();
 function updatePlayerCamera(dt) {
@@ -3215,8 +3297,10 @@ function heloKey(recall = false) {
   const s = PL.ship; if (!s || s.dead || state !== 'play') return;
   const h = W.helo;
   if (h && !h.dead) {
-    if (recall) { h.state = 'rtb'; radio('Air', `${h.name} returning to mother.`, ''); return; }
+    if (recall) { if (h.state === 'winch' && MS.raft) MS.raft.state = 'adrift'; h.state = 'rtb'; radio('Air', `${h.name} returning to mother.`, ''); return; }
+    if (h.pilot || h.state === 'winch') { flashMsg(`${h.name} is busy with the pilot`); return; }
     h.goal = heloGoal(); h.state = 'transit'; h.goalT = PL.lock && !PL.lock.isAir && !PL.lock.isMissile ? PL.lock : null;
+    h.rescue = !h.goalT && !!MS.raft && MS.raft.state === 'adrift';
     radio('Air', `${h.name} retasked, bearing ${fmtBrg(bearing(s.x, s.z, h.goal.x, h.goal.z))}.`, '');
     return;
   }
@@ -3227,14 +3311,84 @@ function heloKey(recall = false) {
   const S = SPECS[s.cls], hx = S.heli ? S.heli.x : -s.L * 0.27;
   const m = helicopterMesh(PL.side);
   const p = new V3(hx, s.P.deckAt(hx) + (S.heli ? 0.5 : 6.5), 0); s.obj.localToWorld(p);
-  W.helo = { isAir: true, side: PL.side, name: HELO_NAME[PL.side], p, h: s.h, speed: 0, vx: 0, vy: 0, vz: 0, state: 'takeoff', t: 0, fuel: 150, torp: 1, goal: heloGoal(), goalT: PL.lock && !PL.lock.isAir && !PL.lock.isMissile ? PL.lock : null, obj: m.group, rotor: m.rotor, tail: m.tail, dead: false, bank: 0, deckX: hx, owner: s };
+  W.helo = { isAir: true, side: PL.side, name: HELO_NAME[PL.side], p, h: s.h, speed: 0, vx: 0, vy: 0, vz: 0, state: 'takeoff', t: 0, fuel: MS.raft ? 320 : 150, torp: 1, goal: heloGoal(), goalT: PL.lock && !PL.lock.isAir && !PL.lock.isMissile ? PL.lock : null, obj: m.group, rotor: m.rotor, tail: m.tail, dead: false, bank: 0, deckX: hx, owner: s };
+  W.helo.rescue = !W.helo.goalT && !!MS.raft && MS.raft.state === 'adrift';
   m.group.rotation.order = 'YZX';
   scene.add(m.group);
   radio('Air', `${HELO_NAME[PL.side]} launching. Bearing ${fmtBrg(bearing(s.x, s.z, W.helo.goal.x, W.helo.goal.z))}, ${(Math.hypot(W.helo.goal.x - s.x, W.helo.goal.z - s.z) / 1000).toFixed(1)} km.`, '');
 }
+/* Search and rescue: a life raft that drifts, smokes and strobes, and can be reached by ship or helicopter. */
+const RAFT_HOLD = 12, WINCH_T = 14;
+function buildRaft() {
+  const g = new THREE.Group();
+  const tube = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.3, 8, 18).rotateX(Math.PI / 2), MAT.orange);
+  const floor = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 0.1, 18), MAT.black);
+  const canopy = new THREE.Mesh(new THREE.SphereGeometry(1.05, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.85, 1), MAT.orange);
+  canopy.position.y = 0.2;
+  const pilot = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.45, 4, 8), MAT.green);
+  pilot.position.set(0.55, 0.55, 0.3);
+  const strobe = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  strobe.position.y = 1.15;
+  g.add(tube, floor, canopy, pilot, strobe);
+  g.userData = { pilot, strobe };
+  return g;
+}
+function raftTick(dt) {
+  const R = MS.raft; if (!R) return;
+  const s = PL.ship;
+  if (R.state === 'adrift' || R.state === 'winch') {
+    R.x += WIND.x * 0.05 * dt; R.z += WIND.z * 0.05 * dt;
+    MS.waypoints[0].x = R.x; MS.waypoints[0].z = R.z;
+  }
+  const y = swellH(R.x, R.z);
+  R.obj.position.set(R.x, y + 0.15, R.z);
+  R.obj.rotation.set(Math.sin(TIME * 1.3) * 0.12, TIME * 0.1, Math.cos(TIME * 1.1) * 0.12);
+  R.obj.userData.pilot.visible = R.state === 'adrift' || R.state === 'winch';
+  if (R.state !== 'adrift' && R.state !== 'winch') { R.obj.userData.strobe.visible = false; return; }
+  // Orange marker smoke and a strobe, so the raft can be found through binoculars
+  const L = 0.4 + LIT() * 0.6;
+  R.smokeAcc += dt * 7;
+  while (R.smokeAcc > 1) { R.smokeAcc -= 1; fxSmoke.emit(R.x + rand(-0.5, 0.5), y + 0.8, R.z + rand(-0.5, 0.5), rand(-0.4, 0.4), rand(1.5, 3), rand(-0.4, 0.4), rand(6, 10), 1.5, rand(12, 22), 1.0 * L, 0.42 * L, 0.12 * L, 0.75, 0.25, 0.35); }
+  R.strobe -= dt;
+  R.obj.userData.strobe.visible = R.strobe > 1.35;
+  if (R.strobe <= 0) { R.strobe = 1.5; flashLight(R.x, y + 1.5, R.z, 0xffffff, 1.5e5, 0.12); }
+  if (R.state !== 'adrift') return;
+  // Pickup by ship: close, slow and steady
+  if (s && !s.dead) {
+    const d = Math.hypot(R.x - s.x, R.z - s.z), slow = Math.abs(s.speed) < 2.6;
+    if (d < 150 && slow) {
+      if (R.hold === 0) radio('Boat crew', 'Sea boat away. Hold her steady.', '');
+      R.hold += dt;
+      if (R.hold >= RAFT_HOLD) recoverPilot('ship');
+    } else {
+      R.hold = Math.max(0, R.hold - dt * 2);
+      if (d < 450 && !slow && !R.toldSlow) { R.toldSlow = true; flashMsg('Slow below 5 knots within 150 m of the raft (S to slow down)'); }
+    }
+  }
+  // Enemy boats loitering at the raft take the pilot
+  let near = Infinity, at = false;
+  for (const e of W.ships) {
+    if (!e.capture || e.dead) continue;
+    const d = Math.hypot(R.x - e.x, R.z - e.z);
+    near = Math.min(near, d);
+    if (d < 230 && Math.abs(e.speed) < 4) at = true;
+  }
+  R.cap = at ? R.cap + dt : Math.max(0, R.cap - dt * 0.5);
+  if (near < 2500 && R.warned < 1) { R.warned = 1; radio('CIC', 'Missile boat 2.5 km from the raft!', 'bad'); }
+  if (at && R.warned < 2) { R.warned = 2; radio('CIC', 'They are alongside the raft! Drive them off!', 'bad'); sfx('alarm'); }
+  if (R.cap > 15) { R.state = 'lost'; radio('CIC', 'They have the pilot. The raft is empty.', 'bad'); }
+}
+function recoverPilot(how) {
+  const R = MS.raft;
+  if (how === 'helo') { R.state = 'helo'; radio('Air', `Pilot is aboard the ${HELO_NAME[PL.side]}. Bringing them home.`, 'good'); if (R.onAboard) R.onAboard(); return; }
+  R.state = 'aboard'; R.hold = 0;
+  radio('Boat crew', 'Pilot recovered, cold and wet but in one piece!', 'good');
+  if (R.onAboard) R.onAboard();
+}
 function heloGoal() {
   const s = PL.ship, t = PL.lock;
   if (t && !t.isAir && !t.isMissile) return new V3(t.x, 0, t.z);
+  if (MS.raft && MS.raft.state === 'adrift') return new V3(MS.raft.x, 0, MS.raft.z);
   const d = Math.hypot(PL.aimPoint.x - s.x, PL.aimPoint.z - s.z);
   if (d > 800 && d < 20000) return PL.aimPoint.clone().setY(0);
   const datum = W.datums.find(dd => !dd.sub.dead);
@@ -3244,11 +3398,21 @@ function heloGoal() {
 function updateHelo(dt) {
   PL.heloCd -= dt;
   const h = W.helo; if (!h) return;
-  if (h.dead) { scene.remove(h.obj); W.helo = null; PL.heloCd = 60; return; }
+  if (h.dead) {
+    // Lost with the pilot aboard, the rescue has failed; lost over the raft, the pilot is still in it
+    if (h.pilot && MS.raft && MS.raft.state === 'helo') { MS.raft.state = 'lost'; radio('Air', `We have lost the ${h.name} with the pilot aboard.`, 'bad'); }
+    else if (h.state === 'winch' && MS.raft && MS.raft.state === 'winch') { MS.raft.state = 'adrift'; radio('Air', `We have lost the ${h.name} over the raft. The pilot is still in the water.`, 'bad'); }
+    scene.remove(h.obj); W.helo = null; PL.heloCd = 60; return;
+  }
   const s = PL.ship;
   h.t += dt;
   if (h.state !== 'takeoff') h.fuel -= dt;
-  if (h.fuel < 25 && h.state !== 'rtb') { h.state = 'rtb'; radio('Air', `${h.name} bingo fuel, returning.`, ''); }
+  if (h.fuel < 25 && h.state !== 'rtb') { if (h.state === 'winch') MS.raft.state = 'adrift'; h.state = 'rtb'; radio('Air', `${h.name} bingo fuel, returning.`, ''); }
+  if (h.rescue && MS.raft) {
+    const R = MS.raft;
+    if (R.state === 'adrift' || R.state === 'winch') h.goal.set(R.x, 0, R.z);
+    else if (!h.pilot && h.state !== 'rtb') { h.rescue = false; h.state = 'rtb'; }
+  }
   if (h.goalT && !h.goalT.dead) h.goal.set(h.goalT.x, 0, h.goalT.z);
   let want = h.h, spd = 65, alt = 120;
   if (h.state === 'takeoff') {
@@ -3259,8 +3423,20 @@ function updateHelo(dt) {
       if (h.t > 5.5) h.state = 'transit';
     }
   } else if (h.state === 'transit') {
-    want = bearing(h.p.x, h.p.z, h.goal.x, h.goal.z);
-    if (Math.hypot(h.goal.x - h.p.x, h.goal.z - h.p.z) < 900) { h.state = 'station'; radio('Air', `${h.name} on station. Dipping sonar in the water.`, 'quiet'); }
+    want = bearing(h.p.x, h.p.z, h.goal.x, h.goal.z); spd = h.rescue ? 75 : 65;
+    if (Math.hypot(h.goal.x - h.p.x, h.goal.z - h.p.z) < 900) {
+      if (h.rescue) { h.state = 'winch'; h.winchT = 0; MS.raft.state = 'winch'; radio('Air', `${h.name} over the raft. Rescue swimmer going down.`, ''); }
+      else { h.state = 'station'; radio('Air', `${h.name} on station. Dipping sonar in the water.`, 'quiet'); }
+    }
+  } else if (h.state === 'winch') {
+    // Hover low over the raft while the swimmer and winch do their work
+    const d = Math.hypot(h.goal.x - h.p.x, h.goal.z - h.p.z);
+    want = bearing(h.p.x, h.p.z, h.goal.x, h.goal.z); spd = clamp(d * 0.3, 0, 40); alt = d < 120 ? 18 : 55;
+    if (d < 45) {
+      h.winchT += dt;
+      if (Math.random() < dt * 40) { const a = rand(TAU), r = rand(6, 16), L = 0.5 + LIT() * 0.5; fxSpray.emit(h.goal.x + Math.cos(a) * r, 0.4, h.goal.z + Math.sin(a) * r, Math.cos(a) * 12, rand(0.5, 3), Math.sin(a) * 12, rand(1, 2), 2, 7, L, L, L, 0.5, 0.8, -1); }
+      if (h.winchT >= WINCH_T) { h.pilot = true; h.state = 'rtb'; recoverPilot('helo'); }
+    }
   } else if (h.state === 'station') {
     // Orbit the datum low and slow, listening
     const a = bearing(h.goal.x, h.goal.z, h.p.x, h.p.z);
@@ -3268,10 +3444,15 @@ function updateHelo(dt) {
     spd = 42; alt = 55;
   } else if (h.state === 'rtb') {
     if (!s || s.dead) { h.dead = true; return; }
-    want = bearing(h.p.x, h.p.z, s.x, s.z);
+    // Aim a little ahead of the ship and overtake her properly, even when she is steaming hard and weaving
+    want = bearing(h.p.x, h.p.z, s.x + s.vx * 3, s.z + s.vz * 3);
     const d = Math.hypot(s.x - h.p.x, s.z - h.p.z);
-    alt = d < 600 ? 30 : 100; spd = d < 600 ? Math.max(s.speed + 4, 20) : 65;
-    if (d < 120) { scene.remove(h.obj); W.helo = null; PL.heloCd = 45; radio('Air', `${h.name} on deck. Refuelling and rearming.`, 'good'); return; }
+    alt = d < 600 ? 30 : 100; spd = d < 600 ? Math.max(Math.abs(s.speed) + 10, 22) : 70;
+    if (d < 150) {
+      scene.remove(h.obj); W.helo = null; PL.heloCd = 45; radio('Air', `${h.name} on deck. Refuelling and rearming.`, 'good');
+      if (h.pilot && MS.raft) { MS.raft.state = 'aboard'; radio('Medical', 'The pilot is in the sick bay. Hypothermic, but fine.', 'good'); }
+      return;
+    }
   }
   if (h.state !== 'takeoff') {
     const dh = clamp(wrapPi(want - h.h), -0.7 * dt, 0.7 * dt);
@@ -3749,8 +3930,9 @@ function updateHud(dt) {
     <div><span>${SPECIAL_NAME[PL.side]} <kbd>Q</kbd></span><b>${PL.special}</b></div>
     <div><span>Chaff <kbd>C</kbd> · Jammer <kbd>J</kbd></span><b>${PL.chaff}${PL.chaffCd > 0 ? ' (' + Math.ceil(PL.chaffCd) + 's)' : ''} · ${ecm}</b></div>
     ${PL.flares || SEA.night ? `<div><span>Star shells <kbd>F</kbd></span><b>${PL.flares}</b></div>` : ''}
+    ${SEA.night || PL.lightOn ? `<div><span>Searchlight <kbd>N</kbd></span><b>${PL.lightOn ? '<i class="ok">On</i>' : 'Off'}</b></div>` : ''}
     <div><span>CIWS</span><b>${ciws}</b></div>
-    <div><span>Helicopter <kbd>L</kbd></span><b>${W.helo ? `<i class="ok">${W.helo.state === 'station' ? 'On station' : W.helo.state === 'rtb' ? 'Returning' : 'Airborne'}</i> ${Math.max(0, Math.round(W.helo.fuel))}s` : PL.heloCd > 0 ? `Refuel ${Math.ceil(PL.heloCd)}s` : PL.heloSorties > 0 ? `On deck · ${PL.heloSorties}` : 'None left'}</b></div>`;
+    <div><span>Helicopter <kbd>L</kbd></span><b>${W.helo ? `<i class="ok">${W.helo.state === 'station' ? 'On station' : W.helo.state === 'winch' ? `Winching ${Math.round((W.helo.winchT || 0) / WINCH_T * 100)}%` : W.helo.state === 'rtb' ? (W.helo.pilot ? 'Returning with pilot' : 'Returning') : 'Airborne'}</i> ${Math.max(0, Math.round(W.helo.fuel))}s` : PL.heloCd > 0 ? `Refuel ${Math.ceil(PL.heloCd)}s` : PL.heloSorties > 0 ? `On deck · ${PL.heloSorties}` : 'None left'}</b></div>`;
   if (wp !== lastHud) { $('weapons').innerHTML = wp; lastHud = wp; }
   $('sys').innerHTML = Object.keys(PL.sys).map(k => `<span class="${PL.sys[k] >= 70 ? 'ok' : sysOK(k) ? 'warn' : 'bad'}${PL.dcT > 0 && PL.dcSys === k ? ' fix' : ''}" title="${SYS_NAME[k]} ${Math.round(PL.sys[k])}%">${{ gun: 'GUN', radar: 'RDR', launchers: 'MSL', engines: 'ENG', steering: 'STR' }[k]}</span>`).join('') + `<em>${PL.dcT > 0 ? 'Repairing' : PL.dcCd > 0 ? 'Teams ' + Math.ceil(PL.dcCd) + 's' : 'Repair <kbd>H</kbd>'}</em>`;
   // Air picture: inbound threats with time to impact and how we are engaging them
@@ -3833,6 +4015,12 @@ function aiShip(s, dt) {
   let d = Infinity;
   if (s.role === 'convoy' || s.role === 'hvu') desired = followPath(s);
   else if (s.role === 'cruise') { desired = s.h + Math.sin(TIME * 0.05 + s.phase) * 0.2; s.order = s.maxSpeed * 0.6; }
+  else if (s.capture && MS.raft && MS.raft.state === 'adrift') {
+    const R = MS.raft, dr = Math.hypot(R.x - s.x, R.z - s.z);
+    desired = bearing(s.x, s.z, R.x, R.z);
+    s.order = dr > 700 ? s.maxSpeed : dr > 220 ? 5 : 1.2;
+    if (t) d = Math.hypot(t.x - s.x, t.z - s.z);
+  }
   else if (s.escort && s.escort.some(c => !c.dead && !c.arrived)) {
     // Escort: hold a station ahead of the convoy on the threat side, and only fight from near it
     const live = s.escort.filter(c => !c.dead && !c.arrived), lead = live[0];
@@ -3885,7 +4073,9 @@ function aiShip(s, dt) {
         const dmg = C.gun.dmg * (enemy ? D.dmg : 0.9);
         fireShell(s, muz, velFrom(s2.el, s2.az, SHELL_V), dmg, { small: C.small });
         // Spread grows with range: at 12 km a shell spends 14 s in the air and the solution is never as tight
-        rec.r = Math.max((enemy ? D.dispMin : 40) * (1 + SEA.amp * 0.08) * (0.6 + d / 8000), rec.r * 0.8);
+        // At night a darkened ship is hard to range on; one showing a searchlight is not
+        const night = t.player && SEA.night ? (PL.lightOn ? 0.85 : 1.4) : 1;
+        rec.r = Math.max((enemy ? D.dispMin : 40) * (1 + SEA.amp * 0.08) * (0.6 + d / 8000) * night, rec.r * 0.8);
       }
     }
   }
@@ -3924,7 +4114,8 @@ function aiAirDefence(s, dt) {
   }
   if (!tgt) return;
   tgt.samOn = true;
-  const pk = tgt.isAir ? 0.6 : enemy ? DIFF[CFG.diff].samPk : 0.45;
+  // A helicopter down among the wave tops is a hard target
+  const pk = tgt === W.helo ? (tgt.p.y < 60 ? 0.35 : 0.5) : tgt.isAir ? 0.6 : enemy ? DIFF[CFG.diff].samPk : 0.45;
   const from = new V3(s.x + fx(s.h) * s.L * 0.28, s.P.F + 1.5, s.z + fz(s.h) * s.L * 0.28);
   const m = launchMissile('sam', s, from, new V3(0, 1, 0), tgt, { pk, boost: 0.45 });
   m.onDone = () => { tgt.samOn = false; };
@@ -4092,6 +4283,39 @@ const MISSIONS = [
     },
   },
   {
+    id: 'rescue', env: 'squall', time: '17:35', weather: 'Late afternoon · squalls · rough sea',
+    title: { ALLIED: 'Pilot Down', PLA: 'Pilot Down' },
+    place: { ALLIED: 'West of the Penghu Islands', PLA: 'East of Nan\'ao Island' },
+    brief: {
+      ALLIED: 'An ROCAF F-16V pilot has ejected over the strait and is adrift in a life raft 8 km west of you, beacon transmitting. PLA missile boats are racing to reach the raft first. Get there and bring the pilot aboard: stop within 150 m of the raft (under 5 knots) and hold while the sea boat makes the pickup, or send the Seahawk (L) to winch the pilot up. Keep the boats off the raft, then take the pilot back to the rendezvous.',
+      PLA: 'A J-16 pilot has ejected over the strait and is adrift in a life raft 8 km east of you, beacon transmitting. ROC missile boats are racing to reach the raft first. Get there and bring the pilot aboard: stop within 150 m of the raft (under 5 knots) and hold while the sea boat makes the pickup, or send the Z-9C (L) to winch the pilot up. Keep the boats off the raft, then take the pilot back to the rendezvous.',
+    },
+    loadout: { asm: 6, sam: 16, asroc: 2, special: 1, chaff: 4, flares: 0, helo: 2 },
+    setup(A) {
+      A.player(0, 0, A.toward);
+      const R = MS.raft = { x: A.ex(8200), z: -700, state: 'adrift', hold: 0, cap: 0, obj: buildRaft(), smokeAcc: 0, strobe: 0, warned: 0 };
+      scene.add(R.obj);
+      const rv = { x: A.ex(-1500), z: 600, label: 'Rendezvous', r: 800 };
+      MS.waypoints = [{ x: R.x, z: R.z, label: 'Raft' }];
+      for (let i = 0; i < 3; i++) { const b = A.enemy('fac', { x: A.ex(15500 + i * 400), z: -2400 + i * 1500, h: A.away, tag: 'fac' }); b.capture = true; }
+      A.at(55, () => { A.jets(A.E, 2); radio('Air', 'Two fast movers inbound, low.', 'bad'); });
+      A.at(175, () => { A.enemy('frigate', { x: A.ex(18000), z: 1800, h: A.away, tag: 'ff' }); radio('CIC', `Frigate closing from 18 km. Her missiles reach 8 km: keep the ${HELO_NAME[A.P]} clear of her.`, 'bad'); });
+      A.at(165, () => { if (R.state !== 'adrift') return; for (let i = 0; i < 2; i++) { const b = A.enemy('fac', { x: A.ex(14000), z: 2600 - i * 900, h: A.away, tag: 'fac' }); b.capture = true; } radio('CIC', 'Two more boats heading for the raft!', 'bad'); });
+      const back = A.obj({ text: 'Take the pilot to the rendezvous', hidden: true, need: 1, fail: () => R.state === 'lost', count: () => (R.state === 'aboard' && PL.ship && Math.hypot(PL.ship.x - rv.x, PL.ship.z - rv.z) < rv.r ? 1 : 0) });
+      R.onAboard = () => { back.hidden = false; MS.waypoints = [rv]; };
+      A.obj({
+        text: 'Recover the pilot', need: 1, count: () => (R.state === 'aboard' || R.state === 'helo' ? 1 : 0), fail: () => R.state === 'lost',
+        progress: () => (R.hold > 0 ? `pickup ${Math.round(R.hold / RAFT_HOLD * 100)}%` : R.cap > 0 ? 'boats at the raft!' : PL.ship ? `${(Math.hypot(R.x - PL.ship.x, R.z - PL.ship.z) / 1000).toFixed(1)} km` : ''),
+      });
+      // Keep the rendezvous objective after the recovery one in the list
+      MS.objs.push(MS.objs.shift());
+      A.obj({ text: 'Sink all the missile boats', secondary: true, final: () => A.killed('fac') >= A.count('fac') && A.count('fac') > 0 });
+      A.at(3, () => radio('CIC', `Beacon bearing ${fmtBrg(bearing(0, 0, R.x, R.z))}, 8.2 km. Missile boats on radar beyond it, heading for the raft.`, 'bad'));
+      A.at(9, () => radio('Captain', `Ahead flank. Slow below 5 knots within 150 m of the raft to pick the pilot up, or launch the ${HELO_NAME[A.P]} with L.`, 'tip'));
+    },
+    tick(A, dt) { raftTick(dt); },
+  },
+  {
     id: 'night', env: 'night', time: '23:40', weather: 'Night · moonlit · calm',
     title: { ALLIED: 'Kinmen Night', PLA: 'Xiamen Approaches' },
     place: { ALLIED: 'Kinmen', PLA: 'Kinmen' },
@@ -4196,7 +4420,7 @@ function missionAPI(def) {
       for (const I of list) { W.islands.push(I); const g = buildIsland(I); scene.add(g); W.islandObjs.push(g); }
     },
     at: (t, fn) => MS.timers.push({ t, fn }),
-    obj(o) { MS.objs.push({ done: false, failed: false, ...o }); },
+    obj(o) { const ob = { done: false, failed: false, ...o }; MS.objs.push(ob); return ob; },
     killed: tag => MS.kills[tag] || 0,
     count: tag => MS.spawned[tag] || 0,
   };
@@ -4204,6 +4428,7 @@ function missionAPI(def) {
 }
 
 function clearWorld() {
+  if (MS.raft) { scene.remove(MS.raft.obj); MS.raft.obj.traverse(o => { if (o.geometry) o.geometry.dispose(); }); MS.raft.obj.userData.strobe.material.dispose(); MS.raft = null; }
   for (const s of W.ships) removeShip(s);
   for (const j of W.jets) scene.remove(j.obj);
   if (W.helo) scene.remove(W.helo.obj);
@@ -4229,7 +4454,7 @@ function buildRanges() {
 function startMission(i) {
   const def = MISSIONS[i];
   clearWorld();
-  Object.assign(MS, { def, idx: i, t: 0, objs: [], timers: [], over: false, won: false, endT: 0, waypoints: [], limit: 0, kills: {}, spawned: {}, arrived: 0 });
+  Object.assign(MS, { def, idx: i, t: 0, objs: [], timers: [], over: false, won: false, endT: 0, waypoints: [], limit: 0, kills: {}, spawned: {}, arrived: 0, raft: null });
   let env = def.env;
   MS.timeLabel = def.time;
   if (def.endless) { const e = pick(PATROL_ENV); env = e[0]; MS.timeLabel = e[1]; }
@@ -4388,6 +4613,7 @@ function updateWorld(dt, playing) {
   }
   W.ships = W.ships.filter(s => !s.sunk);
   if (playing) { updatePlayerCamera(dt); aimUpdate(); playerWeapons(dt); }
+  updateSearchlight(dt);
   updateJets(dt); if (playing) updateHelo(dt); updateMissiles(dt); updateTorps(dt); updateShells(dt);
   for (const p of W.pending) {
     if (p.fall) {
@@ -4455,6 +4681,7 @@ function setQuality(level) {
   const q = gfxNow();
   pixelRatio = Math.min(window.devicePixelRatio || 1, q.pr);
   bloomPass.enabled = q.bloom;
+  GRADE.shafts.value = q.shafts;
   for (const rt of [composer.renderTarget1, composer.renderTarget2]) if (rt.samples !== q.msaa) { rt.samples = q.msaa; rt.dispose(); }
   if (WATER_RT && WATER_RT.width !== q.water) WATER_RT.setSize(q.water, q.water);
   if (q.shadow !== prev.shadow) {
@@ -4564,6 +4791,7 @@ window.addEventListener('keydown', e => {
     else if (e.code === 'KeyF') starShellKey();
     else if (e.code === 'KeyR') radarRange = radarRange === 12000 ? 24000 : radarRange === 24000 ? 6000 : 12000;
     else if (e.code === 'KeyL') heloKey(e.shiftKey);
+    else if (e.code === 'KeyN') lightKey();
     else if (e.code === 'KeyZ') PL.zoomOn = !PL.zoomOn;
     else if (e.code === 'KeyG') adModeKey();
     else if (e.code === 'KeyJ') ecmKey();
@@ -4678,6 +4906,7 @@ function unlockPointer() {
   $('tZoom').addEventListener('pointerdown', () => { PL.zoomOn = !PL.zoomOn; $('tZoom').classList.toggle('on', PL.zoomOn); });
   $('tTgt').addEventListener('pointerdown', () => cycleTarget(1));
   $('tPause').addEventListener('pointerdown', () => pause(true));
+  $('tLight').addEventListener('pointerdown', () => { lightKey(); $('tLight').classList.toggle('on', !!PL.lightOn); });
 })();
 
 /* ------------------------------------------------------------------ */
@@ -4819,7 +5048,12 @@ function simulate(seconds, auto = true) {
       if (Object.values(PL.sys).some(v => v < 50) && PL.dcCd <= 0) damageControlKey();
       if (!W.helo && W.datums.some(d => !d.sub.dead) && PL.heloCd <= 0 && PL.heloSorties > 0) heloKey();
       const mp = MS.waypoints[0] || (!W.ships.some(o => o.isSub && o.detected && !o.dead) && W.datums.find(d => !d.sub.dead));
-      if (mp) { const b = wrapPi(bearing(s.x, s.z, mp.x, mp.z) - s.h); PL.rudder = clamp(b, -1, 1) * (Math.hypot(mp.x - s.x, mp.z - s.z) > 2500 ? 1 : 0); }
+      if (mp) { const b = wrapPi(bearing(s.x, s.z, mp.x, mp.z) - s.h); PL.rudder = clamp(b, -1, 1) * (Math.hypot(mp.x - s.x, mp.z - s.z) > (MS.raft ? 60 : 2500) ? 1 : 0); }
+      if (MS.raft && MS.raft.state === 'adrift') {
+        const d = Math.hypot(MS.raft.x - s.x, MS.raft.z - s.z);
+        PL.telegraph = d > 1800 ? 6 : d > 500 ? 3 : 2;
+        if (!W.helo && PL.heloSorties > 0 && PL.heloCd <= 0 && d > 3000) { const keep = PL.lock; PL.lock = null; heloKey(); PL.lock = keep; }
+      } else if (MS.raft && MS.raft.state === 'aboard') PL.telegraph = 6;
       // Under gunfire, weave to spoil their solution
       if ((PL.shellHits || []).some(t => MS.t - t < 30)) PL.rudder = Math.sin(MS.t / 7) > 0 ? 0.8 : -0.8;
     }
@@ -4828,4 +5062,4 @@ function simulate(seconds, auto = true) {
   }
   return { t: MS.t, over: MS.over, won: MS.won, reason: MS.reason, hp: PL.ship ? Math.round(PL.ship.hp) : null, stats: { ...PL.stats }, objs: MS.objs.map(o => (o.done ? '+' : o.failed ? 'x' : '-') + o.text), ships: W.ships.length, jets: W.jets.length, missiles: W.missiles.length };
 }
-window.__strait = { simulate, startMission, openBrief, MS, PL, W, CFG, get state() { return state; }, set state(v) { state = v; }, applyEnv, camera, scene, setGfxMode, GFX_STATE, damageShip, SEA, bowSlam };
+window.__strait = { simulate, startMission, openBrief, MS, PL, W, CFG, get state() { return state; }, set state(v) { state = v; }, applyEnv, camera, scene, setGfxMode, GFX_STATE, damageShip, SEA, bowSlam, SEARCH, renderer, GRADE };
