@@ -32,8 +32,8 @@
   --f-text-en: "Literata", "Noto Serif TC", Georgia, serif;
   --f-ui: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
 
-  --lh: 34px;
-  --rows: 12;
+  --lh: 28px;
+  --pad-y: 10px;
   color-scheme: light;
   padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -77,7 +77,7 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { min-height: 100%; }
+html, body { height: 100%; }
 body {
   margin: 0;
   background: var(--paper);
@@ -93,15 +93,17 @@ button:disabled { cursor: default; opacity: .45; }
 :focus-visible { outline: 2px solid var(--jade); outline-offset: 2px; }
 ::selection { background: var(--jade-tint); }
 
+/* One screen: the desk takes whatever height is left and each pane scrolls on its own, so the run button never leaves the screen. */
 .app {
+  height: 100%;
   max-width: 1260px;
   margin: 0 auto;
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
-  padding-block: 22px 36px;
+  padding-block: 14px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 /* Masthead */
@@ -110,13 +112,13 @@ button:disabled { cursor: default; opacity: .45; }
 .seal {
   position: relative;
   flex: none;
-  width: 46px; height: 46px;
+  width: 40px; height: 40px;
   display: grid; place-items: center;
   background: var(--zhu);
   color: var(--on-zhu);
   font-family: var(--f-brush);
   font-weight: 700;
-  font-size: 29px;
+  font-size: 25px;
   line-height: 1;
   border-radius: 7px;
   transform: rotate(-4deg);
@@ -133,11 +135,11 @@ button:disabled { cursor: default; opacity: .45; }
   margin: 0;
   font-family: var(--f-brush);
   font-weight: 700;
-  font-size: 30px;
+  font-size: 26px;
   line-height: 1.15;
   letter-spacing: .12em;
 }
-.brand p { margin: 2px 0 0; font-size: 13px; color: var(--ink-soft); letter-spacing: .06em; }
+.brand p { margin: 1px 0 0; font-size: 12.5px; color: var(--ink-soft); letter-spacing: .06em; }
 .top-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 .ghost {
@@ -174,22 +176,23 @@ button:disabled { cursor: default; opacity: .45; }
   background: var(--sheet);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 10px 14px 11px;
+  padding: 7px 14px 8px;
   min-width: 0;
 }
-.mode b { font-family: var(--f-brush); font-weight: 700; font-size: 20px; letter-spacing: .06em; line-height: 1.35; }
+.mode b { font-family: var(--f-brush); font-weight: 700; font-size: 18px; letter-spacing: .06em; line-height: 1.35; }
 .mode small { font-size: 12px; color: var(--ink-soft); line-height: 1.4; }
 .mode:hover:not([aria-selected="true"]) { border-color: var(--jade); }
 .mode[aria-selected="true"] { background: var(--jade); border-color: var(--jade); color: var(--on-jade); }
 .mode[aria-selected="true"] small { color: var(--on-jade); opacity: .82; }
 
 /* Options */
+.opts-toggle { display: none; }
 .opts {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px;
   background: var(--sheet);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 12px 16px;
+  padding: 9px 14px;
 }
 .opt { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .opt-label { font-size: 12px; color: var(--ink-soft); letter-spacing: .12em; white-space: nowrap; }
@@ -226,10 +229,18 @@ button:disabled { cursor: default; opacity: .45; }
 .extra input::placeholder { color: var(--ink-soft); opacity: .8; }
 
 /* The desk */
-.desk { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.desk {
+  flex: 1 1 auto;
+  min-height: 340px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 14px;
+}
 .pane {
   display: flex; flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: var(--sheet);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -238,8 +249,9 @@ button:disabled { cursor: default; opacity: .45; }
 }
 .pane-head, .pane-foot {
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  flex: none;
   gap: 8px 10px;
-  padding: 9px 14px 9px 22px;
+  padding: 7px 12px 7px 22px;
 }
 .pane-head { border-bottom: 1px solid var(--line); }
 .pane-foot { border-top: 1px solid var(--line); }
@@ -255,15 +267,15 @@ button:disabled { cursor: default; opacity: .45; }
   margin: 0;
   border: 0;
   border-radius: 0;
-  padding: var(--lh) 22px;
-  min-height: calc(var(--lh) * (var(--rows) + 2));
+  padding: var(--pad-y) 22px;
   font-family: var(--f-text);
-  font-size: 17px;
+  font-size: 16px;
   line-height: var(--lh);
   color: var(--ink);
   background-color: var(--sheet);
   background-image: linear-gradient(to bottom, transparent calc(var(--lh) - 1px), var(--rule) calc(var(--lh) - 1px), var(--rule) var(--lh));
   background-size: 100% var(--lh);
+  background-position: 0 var(--pad-y);
   background-attachment: local;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -271,7 +283,10 @@ button:disabled { cursor: default; opacity: .45; }
 .sheet-text[data-script="hans"] { font-family: var(--f-text-sc); }
 .sheet-text[data-script="latin"] { font-family: var(--f-text-en); }
 .sheet-text[data-script="ja"] { font-family: "Hiragino Mincho ProN", "Yu Mincho", var(--f-text); }
-textarea.sheet-text { resize: none; outline: none; overflow: hidden; }
+textarea.sheet-text { flex: 1 1 0; min-height: 0; resize: none; outline: none; overflow-y: auto; }
+.out-scroll { flex: 1 1 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; background: var(--sheet); }
+.out-scroll > .out { flex: 1 0 auto; }
+.out-scroll > .msg, .out-scroll > .notes { flex: none; }
 textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
 .out:empty::before { content: attr(data-empty); color: var(--ink-soft); opacity: .8; }
 .out del {
@@ -339,7 +354,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
 .status[data-state="error"] { color: var(--zhu); }
 
 .msg {
-  margin: 14px 22px 0;
+  margin: 10px 22px 0;
   padding: 10px 14px;
   border: 1px solid var(--zhu);
   background: var(--zhu-tint);
@@ -350,12 +365,10 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
 .msg[data-kind="info"] { border-color: var(--line); background: var(--paper); }
 .msg span { flex: 1 1 240px; min-width: 0; }
 
-.notes { border-top: 1px dashed var(--rule); padding: 14px 22px 18px; }
-.notes h3 { margin: 0 0 6px; font-family: var(--f-brush); font-weight: 700; font-size: 16px; letter-spacing: .1em; color: var(--zhu); }
-.notes ul { margin: 0; padding-left: 1.15em; font-family: var(--f-brush); font-size: 16px; line-height: 1.85; }
+.notes { border-top: 1px dashed var(--rule); padding: 10px 22px 14px; }
+.notes h3 { margin: 0 0 4px; font-family: var(--f-brush); font-weight: 700; font-size: 15px; letter-spacing: .1em; color: var(--zhu); }
+.notes ul { margin: 0; padding-left: 1.15em; font-family: var(--f-brush); font-size: 15px; line-height: 1.75; }
 .notes li::marker { color: var(--zhu); }
-
-.foot { margin: 4px 0 0; font-size: 12.5px; color: var(--ink-soft); max-width: 72ch; }
 
 /* Drawers */
 .overlay { position: fixed; inset: 0; z-index: 30; background: var(--scrim); display: flex; justify-content: flex-end; }
@@ -430,17 +443,45 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
 }
 
 @media (max-width: 900px) {
-  .desk { grid-template-columns: minmax(0, 1fr); }
-  :root { --rows: 8; }
+  .desk { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); min-height: 440px; }
 }
 @media (max-width: 620px) {
-  .modes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .brand h1 { font-size: 26px; }
-  .opts { padding: 12px; gap: 10px 14px; }
+  :root { --lh: 26px; --pad-y: 8px; }
+  .app { padding-block: 10px; gap: 10px; }
+  .top { flex-wrap: nowrap; }
+  .brand { gap: 10px; }
+  .brand p { display: none; }
+  .seal { width: 32px; height: 32px; font-size: 20px; border-radius: 6px; }
+  .seal::after { inset: 3px; border-radius: 3px; }
+  .brand h1 { font-size: 22px; letter-spacing: .08em; }
+  .top-actions { gap: 6px; flex-wrap: nowrap; }
+  .top-actions .ghost { padding: 4px 10px; font-size: 13px; }
+  .engine { padding: 4px 10px 4px 9px; font-size: 12px; white-space: nowrap; }
+  .modes { gap: 6px; }
+  .mode { align-items: center; text-align: center; padding: 6px 4px; }
+  .mode b { font-size: 16px; letter-spacing: .02em; }
+  .mode small { display: none; }
+  .opts-toggle {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%;
+    background: var(--sheet);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 7px 12px;
+    text-align: left;
+    font-size: 13px;
+  }
+  .opts-toggle::after { content: "▾"; margin-left: auto; color: var(--ink-soft); }
+  .opts-toggle[aria-expanded="true"]::after { content: "▴"; }
+  #optsSummary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .opts:not(.open) { display: none; }
+  .opts { padding: 10px 12px; gap: 8px 14px; }
   .extra { flex-wrap: wrap; }
   .extra input { flex: 1 1 100%; }
-  .sheet-text { padding-left: 16px; padding-right: 16px; }
-  .pane-head, .pane-foot { padding-left: 16px; }
+  .sheet-text { font-size: 15.5px; padding-left: 16px; padding-right: 16px; }
+  .pane-head, .pane-foot { padding: 5px 10px 5px 16px; }
+  .pane-title { font-size: 17px; }
+  .run, .stop { padding: 6px 22px; font-size: 14px; }
   .msg { margin-left: 16px; margin-right: 16px; }
   .notes { padding-left: 16px; padding-right: 16px; }
 }
@@ -473,7 +514,8 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     <button type="button" role="tab" class="mode" id="tab-same" data-mode="same" aria-selected="false"><b>原語潤飾</b><small>任何語言，不翻譯</small></button>
   </nav>
 
-  <section class="opts" aria-label="選項">
+  <button type="button" class="opts-toggle" id="optsToggle" aria-expanded="false" aria-controls="opts"><span class="opt-label">選項</span><span id="optsSummary"></span></button>
+  <section class="opts" id="opts" aria-label="選項">
     <div class="opt"><span class="opt-label">語氣</span><div class="seg" id="toneSeg" role="group" aria-label="語氣"></div></div>
     <div class="opt"><span class="opt-label" id="levelLabel">幅度</span><div class="seg" id="levelSeg" role="group" aria-labelledby="levelLabel"></div></div>
     <div class="opt" id="variantOpt" hidden><span class="opt-label">拼寫</span><div class="seg" id="variantSeg" role="group" aria-label="英文拼寫"></div></div>
@@ -513,11 +555,13 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
           </div>
         </div>
       </div>
-      <div class="msg" id="msg" hidden></div>
-      <div class="sheet-text out" id="out" data-empty="結果會出現在這裡。"></div>
-      <div class="notes" id="notes" hidden>
-        <h3 id="notesTitle">修改說明</h3>
-        <ul id="notesList"></ul>
+      <div class="out-scroll" id="outScroll">
+        <div class="msg" id="msg" hidden></div>
+        <div class="sheet-text out" id="out" data-empty="結果會出現在這裡。"></div>
+        <div class="notes" id="notes" hidden>
+          <h3 id="notesTitle">修改說明</h3>
+          <ul id="notesList"></ul>
+        </div>
       </div>
       <div class="pane-foot">
         <span class="count" id="outCount"></span>
@@ -528,8 +572,6 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
       </div>
     </section>
   </main>
-
-  <p class="foot" id="footNote">在 claude.ai 開啟時，使用你自己的 Claude 帳號；在其他地方開啟時，需要 Anthropic API 金鑰。草稿與紀錄只存在這個瀏覽器。</p>
 </div>
 
 <div class="overlay" id="historyOverlay" hidden>
@@ -1010,6 +1052,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
       b.addEventListener('click', () => {
         for (const x of el.children) x.setAttribute('aria-pressed', String(x === b));
         onPick(v);
+        updateOptsSummary();
       });
       return b;
     }));
@@ -1023,17 +1066,24 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     fillSeg($('speedSeg'), SPEEDS, state.speed, (v) => { state.speed = v; persist(); });
     $('notesChk').checked = !!state.notes;
     $('extra').value = state.extra || '';
+    updateOptsSummary();
   }
+  // On phones the options fold into one summary line to leave room for the two panes.
+  function updateOptsSummary() {
+    const name = (list, v) => (list.find((x) => x[0] === v) || [null, ''])[1];
+    const parts = [name(TONES, state.tone), name(LEVELS[MODES[state.mode].kind].opts, state.level[state.mode]), name(SPEEDS, state.speed)];
+    if ((state.extra || '').trim()) parts.push('有補充指示');
+    $('optsSummary').textContent = parts.join('・');
+  }
+  $('optsToggle').addEventListener('click', () => {
+    const open = !$('opts').classList.contains('open');
+    $('opts').classList.toggle('open', open);
+    $('optsToggle').setAttribute('aria-expanded', String(open));
+  });
   $('notesChk').addEventListener('change', (e) => { state.notes = e.target.checked; persist(); });
-  $('extra').addEventListener('input', (e) => { state.extra = e.target.value; persist(); });
+  $('extra').addEventListener('input', (e) => { state.extra = e.target.value; persist(); updateOptsSummary(); });
 
   // ---------- source pane ----------
-  const lh = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--lh')) || 34;
-  function autosize() {
-    src.style.height = 'auto';
-    const step = lh();
-    src.style.height = Math.ceil(src.scrollHeight / step) * step + 'px';
-  }
   function updateDir(text) {
     const dir = state.mode === 'en' ? dirOf(text) : '';
     $('srcHint').textContent = dir ? DIRS[dir].srcHint : MODES[state.mode].srcHint;
@@ -1048,14 +1098,12 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     updateDir(text);
     $('srcCount').textContent = countLabel(text) || '0 字';
     runBtn.textContent = m.run;
-    autosize();
   }
   src.addEventListener('input', () => {
     state.input = src.value;
     src.dataset.script = scriptOf(src.value);
     updateDir(src.value);
     $('srcCount').textContent = countLabel(src.value) || '0 字';
-    autosize();
     persist();
   });
   $('clearBtn').addEventListener('click', () => {
@@ -1113,6 +1161,9 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
       b.setAttribute('aria-pressed', String(b.dataset.view === state.view));
       b.disabled = busy;
     }
+    // While Claude writes, keep the newest text in view unless the reader has scrolled up.
+    const sc = $('outScroll');
+    const follow = busy && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 48;
     let shown = false;
     if (hasOut && m.diff && !busy && state.view === 'diff') {
       const segs = diffFor(r);
@@ -1121,6 +1172,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     }
     if (!shown) out.textContent = hasOut ? r.output : '';
     if (busy && phase === 'writing') out.append(caret);
+    if (follow) sc.scrollTop = sc.scrollHeight;
 
     const items = r && r.notes ? noteItems(r.notes) : [];
     $('notes').hidden = !items.length;
@@ -1209,7 +1261,6 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
       btn.dataset.state = 'ok'; btn.textContent = 'Claude 帳號';
       $('engineText').textContent = '目前在 claude.ai 上開啟，會使用你自己的 Claude 帳號與用量，不需要 API 金鑰。第一次送出時，Claude 會詢問是否允許這個頁面使用。';
       $('claudeBlock').hidden = false; $('keyBlock').hidden = true;
-      $('footNote').textContent = '使用你自己的 Claude 帳號。草稿與紀錄只存在這個瀏覽器。';
     } else {
       const has = !!getKey();
       btn.dataset.state = has ? 'ok' : 'warn';
@@ -1344,6 +1395,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     const secs = () => Math.max(1, Math.round((Date.now() - t0) / 1000));
     setStatus('busy', '思考中');
     timer = setInterval(() => { if (phase === 'thinking') setStatus('busy', '思考中 · ' + secs() + ' 秒'); }, 1000);
+    $('outScroll').scrollTop = 0;
     renderOut();
 
     let raw = '';
@@ -1445,6 +1497,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
         state.result = { mode: it.mode, input: it.input, output: it.output, notes: it.notes || '', example: false, at: it.at, status: { kind: 'done', text: '紀錄 · ' + when(it.at || 0) } };
         hideMsg();
         renderTabs(); renderOptions(); renderSource(); renderOut(); persist(true);
+        src.scrollTop = 0; $('outScroll').scrollTop = 0;
         closeOverlay();
       });
       li.append(b);
@@ -1497,8 +1550,6 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); if (!openId) run(); }
     else if (e.key === 'Escape') { if (openId) closeOverlay(); else if (busy) stop(); }
   });
-  window.addEventListener('resize', autosize);
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(autosize);
 
   // ---------- first paint ----------
   renderTabs();
