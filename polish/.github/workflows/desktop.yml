@@ -1,0 +1,70 @@
+name: Desktop app
+
+# Builds the Electron app on macOS, Windows and Linux. Pushing a tag such as v1.0.0
+# also attaches the installers to a GitHub Release; running it by hand only keeps
+# them as workflow artifacts.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - run: npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # There is no Apple developer certificate, so sign ad hoc (required for Apple
+      # silicon) and zip with ditto so the signature survives the download.
+      - name: Sign and zip the macOS apps
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          for dir in dist/mac dist/mac-arm64; do
+            [ -d "$dir" ] || continue
+            arch=x64; [ "$dir" = dist/mac-arm64 ] && arch=arm64
+            app=$(find "$dir" -maxdepth 1 -name '*.app' | head -n 1)
+            codesign --force --deep --sign - "$app"
+            ditto -c -k --sequesterRsrc --keepParent "$app" "dist/LanguagePolish-$version-mac-$arch.zip"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            desktop/dist/*.zip
+            desktop/dist/*.exe
+            desktop/dist/*.AppImage
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*

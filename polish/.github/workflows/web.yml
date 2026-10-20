@@ -1,0 +1,36 @@
+name: Web app
+
+# Publishes index.html, the manifest, the offline worker and the icons to GitHub Pages.
+# One-time setup: Settings → Pages → Build and deployment → Source: GitHub Actions.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect the site files
+        run: |
+          mkdir _site
+          cp index.html manifest.webmanifest sw.js _site/
+          cp -r icons _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+      - id: deployment
+        uses: actions/deploy-pages@v4

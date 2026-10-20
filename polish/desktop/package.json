@@ -1,0 +1,77 @@
+{
+  "name": "language-polish",
+  "productName": "潤稿台",
+  "version": "1.0.0",
+  "description": "繁中潤飾、繁轉簡與大陸用語、中英互換、原語潤飾",
+  "author": "edc026588",
+  "homepage": "https://github.com/edc026588/language-polish",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edc026588/language-polish.git"
+  },
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "web": "node scripts/copy-web.js",
+    "start": "npm run web && electron .",
+    "dist": "npm run web && electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "io.github.edc026588.languagepolish",
+    "productName": "潤稿台",
+    "executableName": "LanguagePolish",
+    "files": [
+      "main.js",
+      "app/**/*"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "target": [
+        {
+          "target": "dir",
+          "arch": ["arm64", "x64"]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "潤稿台",
+      "artifactName": "LanguagePolish-${version}-windows-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "LanguagePolish-${version}-windows-portable.${ext}"
+    },
+    "linux": {
+      "category": "Office",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "LanguagePolish-${version}-linux-x86_64.${ext}"
+    }
+  }
+}

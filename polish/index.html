@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>潤稿台</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<link rel="manifest" href="manifest.webmanifest" data-pwa>
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png" data-pwa>
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" data-pwa>
+<meta name="apple-mobile-web-app-title" content="潤稿台" data-pwa>
+<meta name="theme-color" content="#edf1ee" media="(prefers-color-scheme: light)" data-pwa>
+<meta name="theme-color" content="#0f1412" media="(prefers-color-scheme: dark)" data-pwa>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&family=Literata:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+SC:wght@400;600&family=Noto+Serif+TC:wght@400;600&display=swap">
@@ -1557,6 +1563,11 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
   renderSource();
   renderOut();
   renderEngine();
+
+  // Installable web app: keep a copy for offline start, but only on a real website (not inside claude.ai or the desktop app).
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !window.claude) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 })();
 </script>
 </body>
