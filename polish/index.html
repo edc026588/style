@@ -469,7 +469,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
   <nav class="modes" role="tablist" aria-label="模式">
     <button type="button" role="tab" class="mode" id="tab-tw" data-mode="tw" aria-selected="true"><b>潤飾繁中</b><small>臺灣用語與標點</small></button>
     <button type="button" role="tab" class="mode" id="tab-cn" data-mode="cn" aria-selected="false"><b>轉簡體</b><small>簡體字與大陸用語</small></button>
-    <button type="button" role="tab" class="mode" id="tab-en" data-mode="en" aria-selected="false"><b>翻英文</b><small>繁體中文 → English</small></button>
+    <button type="button" role="tab" class="mode" id="tab-en" data-mode="en" aria-selected="false"><b>中英互換</b><small>中文 ⇄ English，自動判斷</small></button>
     <button type="button" role="tab" class="mode" id="tab-same" data-mode="same" aria-selected="false"><b>原語潤飾</b><small>任何語言，不翻譯</small></button>
   </nav>
 
@@ -605,8 +605,8 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
             placeholder: '貼上要潤飾的中文。夾雜的簡體字或大陸用語，也會一併改成臺灣用法。' },
     cn:   { kind: 'convert',   label: '轉簡體',   run: '轉換', busy: '轉換中', out: '簡體稿', srcHint: '繁體中文', outHint: '简体中文・大陆用语', diff: false,
             placeholder: '貼上要轉成簡體字與大陸用語的繁體中文。' },
-    en:   { kind: 'translate', label: '翻英文',   run: '翻譯', busy: '翻譯中', out: '英文稿', srcHint: '繁體中文', outHint: 'English', diff: false,
-            placeholder: '貼上要翻成英文的繁體中文。' },
+    en:   { kind: 'translate', label: '中英互換', run: '翻譯', busy: '翻譯中', out: '譯稿',   srcHint: '中文或英文', outHint: '', diff: false,
+            placeholder: '貼上中文會翻成英文，貼上英文會翻成臺灣繁體中文。' },
     same: { kind: 'polish',    label: '原語潤飾', run: '潤飾', busy: '潤飾中', out: '定稿',   srcHint: '任何語言', outHint: '與原文同語言', diff: true,
             placeholder: '貼上任何語言的文字，會用同一種語言潤飾，不會翻譯。' },
   };
@@ -619,6 +619,11 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
   const VARIANTS = [['us', '美式'], ['uk', '英式']];
   const SPEEDS = [['quick', '快速'], ['default', '標準'], ['complex', '精細']];
   const NOTES_TITLE = { polish: '修改說明', convert: '轉換說明', translate: '翻譯說明' };
+  // 中英互換 picks its direction from the source: mostly English words go to Taiwan Chinese, anything else goes to English.
+  const DIRS = {
+    zh2en: { srcHint: '中文 → English', out: '英文稿', outHint: 'English' },
+    en2zh: { srcHint: 'English → 繁體中文', out: '中文稿', outHint: '臺灣繁體中文' },
+  };
 
   // ---------- prompt ----------
   const SPECS = {
@@ -648,7 +653,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
       resultHint: '(the Simplified Chinese text only)',
       notesHint: ' List vocabulary replacements as 原詞 → 新词 on one line.',
     },
-    en: {
+    zh2en: {
       task: 'You are a professional Chinese-to-English translator. Translate the text in <source> into English.',
       rules: (o) => [
         'Write natural, idiomatic English that a native speaker would write for the same purpose and reader. Do not translate word for word; render Chinese set phrases and courtesy formulas (e.g. 百忙之中撥冗, 不吝指教, 敬請見諒) with their natural English equivalents.',
@@ -657,6 +662,18 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
       ],
       verb: 'translate',
       resultHint: '(the English translation only)',
+      notesHint: ' Cover idioms, terms and anything that could be read more than one way.',
+    },
+    en2zh: {
+      task: 'You are a professional English-to-Chinese translator in Taiwan. Translate the text in <source> into Traditional Chinese as used in Taiwan.',
+      rules: () => [
+        'Write natural Chinese that a skilled Taiwanese writer would write for the same purpose and reader. Do not translate word for word; avoid translationese (歐化中文) such as needless 被 passives, strings of 的, and pronouns that English needs but Chinese leaves out.',
+        'Use Taiwan vocabulary (軟體, 影片, 網路, 資訊, 品質) and the Chinese names customary in Taiwan for people, places and brands (e.g. 雪梨, 紐西蘭, 賓士). Keep brand names, product names and technical terms in English where Taiwanese writers usually do.',
+        'Use full-width punctuation as standard in Taiwan: ，。、；：？！, 「」 for quotations with 『』 inside them, 《》 for titles of works. Put a half-width space between Chinese characters and English words.',
+        'Keep all information, names, numbers, dates and units, and do not add facts.',
+      ],
+      verb: 'translate',
+      resultHint: '(the Traditional Chinese translation only)',
       notesHint: ' Cover idioms, terms and anything that could be read more than one way.',
     },
     same: {
@@ -690,14 +707,14 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
       heavy: 'Degree of change: rewrite the piece as a Mainland Chinese writer would write it, adapting expressions freely while keeping every point.',
     },
     translate: {
-      light: "Degree of freedom: faithful. Stay close to the source's sentence order and wording wherever English allows.",
-      medium: 'Degree of freedom: natural. Restructure sentences as needed so the English reads as if it had been written in English.',
-      heavy: 'Degree of freedom: localized. Adapt expressions, idioms and structure freely for an English-speaking reader, keeping every point.',
+      light: "Degree of freedom: faithful. Stay close to the source's sentence order and wording wherever the target language allows.",
+      medium: 'Degree of freedom: natural. Restructure sentences as needed so the translation reads as if it had been written in the target language.',
+      heavy: 'Degree of freedom: localized. Adapt expressions, idioms and structure freely for a reader of the target language, keeping every point.',
     },
   };
 
   function buildPrompt(mode, text, o) {
-    const spec = SPECS[mode];
+    const spec = SPECS[mode === 'en' ? o.dir : mode];
     const kind = MODES[mode].kind;
     const L = [spec.task, '', 'Rules:'];
     for (const r of spec.rules(o)) L.push('- ' + r);
@@ -770,14 +787,20 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     for (const ch of t) { if (SC_SET.has(ch)) sc++; else if (TC_SET.has(ch)) tc++; }
     return sc > tc ? 'hans' : 'hant';
   }
-  function outScript(mode, text) {
-    if (mode === 'tw') return 'hant';
-    if (mode === 'cn') return 'hans';
-    if (mode === 'en') return 'latin';
-    return scriptOf(text);
+  function dirOf(text) {
+    const t = (text || '').slice(0, 4000);
+    const han = (t.match(HAN_RE) || []).length;
+    const words = (t.match(/[A-Za-zÀ-ɏ]+/g) || []).length;
+    return words > han ? 'en2zh' : 'zh2en';
+  }
+  function outScript(r) {
+    if (r.mode === 'tw') return 'hant';
+    if (r.mode === 'cn') return 'hans';
+    if (r.mode === 'en') return dirOf(r.input) === 'en2zh' ? 'hant' : 'latin';
+    return scriptOf(r.output || r.input);
   }
   function langOf(script, mode) {
-    if (mode === 'en') return 'en';
+    if (mode === 'en' && script === 'latin') return 'en';
     return { hant: 'zh-Hant-TW', hans: 'zh-Hans-CN', ja: 'ja' }[script] || '';
   }
   const fmt = (n) => n.toLocaleString('zh-TW');
@@ -996,7 +1019,6 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     fillSeg($('toneSeg'), TONES, state.tone, (v) => { state.tone = v; persist(); });
     $('levelLabel').textContent = LEVELS[kind].label;
     fillSeg($('levelSeg'), LEVELS[kind].opts, state.level[state.mode], (v) => { state.level[state.mode] = v; persist(); });
-    $('variantOpt').hidden = state.mode !== 'en';
     fillSeg($('variantSeg'), VARIANTS, state.variant, (v) => { state.variant = v; persist(); });
     fillSeg($('speedSeg'), SPEEDS, state.speed, (v) => { state.speed = v; persist(); });
     $('notesChk').checked = !!state.notes;
@@ -1012,13 +1034,18 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     const step = lh();
     src.style.height = Math.ceil(src.scrollHeight / step) * step + 'px';
   }
+  function updateDir(text) {
+    const dir = state.mode === 'en' ? dirOf(text) : '';
+    $('srcHint').textContent = dir ? DIRS[dir].srcHint : MODES[state.mode].srcHint;
+    $('variantOpt').hidden = dir !== 'zh2en';
+  }
   function renderSource() {
     const m = MODES[state.mode];
     const text = state.input === null ? EXAMPLES[state.mode].input : state.input;
     if (src.value !== text) src.value = text;
     src.placeholder = m.placeholder;
     src.dataset.script = scriptOf(text);
-    $('srcHint').textContent = m.srcHint;
+    updateDir(text);
     $('srcCount').textContent = countLabel(text) || '0 字';
     runBtn.textContent = m.run;
     autosize();
@@ -1026,6 +1053,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
   src.addEventListener('input', () => {
     state.input = src.value;
     src.dataset.script = scriptOf(src.value);
+    updateDir(src.value);
     $('srcCount').textContent = countLabel(src.value) || '0 字';
     autosize();
     persist();
@@ -1069,10 +1097,12 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
 
   function renderOut() {
     const r = state.result;
-    const m = MODES[r ? r.mode : state.mode];
-    $('outTitle').firstChild.textContent = m.out + ' ';
-    $('outHint').textContent = m.outHint;
-    const script = r ? outScript(r.mode, r.output || '') : '';
+    const mk = r ? r.mode : state.mode;
+    const m = MODES[mk];
+    const label = mk === 'en' ? DIRS[dirOf(r ? r.input : src.value)] : m;
+    $('outTitle').firstChild.textContent = label.out + ' ';
+    $('outHint').textContent = label.outHint;
+    const script = r ? outScript(r) : '';
     out.dataset.script = script;
     out.lang = langOf(script, r && r.mode);
     out.dataset.empty = busy ? 'Claude 正在讀稿…' : '結果會出現在這裡。';
@@ -1291,7 +1321,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     const text = src.value;
     if (!text.trim()) { showMsg('請先貼上或輸入要處理的文字。', 'info'); src.focus(); return; }
     const mode = state.mode;
-    const o = { tone: state.tone, level: state.level[mode], variant: state.variant, notes: !!state.notes, extra: (state.extra || '').trim() };
+    const o = { tone: state.tone, level: state.level[mode], variant: state.variant, notes: !!state.notes, extra: (state.extra || '').trim(), dir: dirOf(text) };
     const prompt = buildPrompt(mode, text, o);
     const eng = engine || await enginePromise;
     if (eng.kind === 'key' && !getKey()) {
