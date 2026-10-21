@@ -3,7 +3,8 @@
 // The page is served from a private rungao:// origin (not file://) so it keeps its
 // own storage for drafts, history and the API key, and can call the Claude API.
 
-const { app, BrowserWindow, Menu, nativeTheme, net, protocol, shell } = require('electron');
+const { app, BrowserWindow, Menu, nativeTheme, net, protocol, screen, shell } = require('electron');
+const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -28,10 +29,32 @@ function openOutside(url) {
   if (/^https?:\/\//.test(url)) shell.openExternal(url);
 }
 
+// The window reopens where it was last closed, as long as that spot is still on a screen.
+const boundsFile = () => path.join(app.getPath('userData'), 'window.json');
+function savedBounds() {
+  try {
+    const b = JSON.parse(fs.readFileSync(boundsFile(), 'utf8'));
+    if (!(b.width >= 380 && b.height >= 560)) return null;
+    const onScreen = screen.getAllDisplays().some(({ workArea: a }) =>
+      b.x < a.x + a.width && b.x + b.width > a.x && b.y < a.y + a.height && b.y + b.height > a.y);
+    return onScreen ? b : { width: b.width, height: b.height, maximized: b.maximized };
+  } catch {
+    return null;
+  }
+}
+function rememberBounds(win) {
+  try {
+    if (win.isMinimized() || win.isFullScreen()) return;
+    fs.writeFileSync(boundsFile(), JSON.stringify({ ...win.getNormalBounds(), maximized: win.isMaximized() }));
+  } catch {}
+}
+
 function createWindow() {
+  const saved = savedBounds();
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
+    ...(saved ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height } : {}),
     minWidth: 380,
     minHeight: 560,
     title: '潤稿台',
@@ -49,6 +72,8 @@ function createWindow() {
       openOutside(url);
     }
   });
+  win.on('close', () => rememberBounds(win));
+  if (saved && saved.maximized) win.maximize();
   win.loadURL(START_URL);
   return win;
 }
@@ -74,6 +99,11 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    app.setAboutPanelOptions({
+      applicationName: '潤稿台',
+      applicationVersion: app.getVersion(),
+      copyright: '繁中潤飾・繁轉簡・中英互換・原語潤飾',
+    });
     Menu.setApplicationMenu(Menu.buildFromTemplate(MENU));
     serveApp();
     createWindow();

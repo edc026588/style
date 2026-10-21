@@ -1,7 +1,7 @@
 // Offline copy of the app shell. The page itself is fetched network-first so a new
 // version shows up on the next visit; fonts are cached after first use. Requests to
 // the Claude API are never touched.
-const CACHE = 'rungao-v1';
+const CACHE = 'rungao-v2';
 const SHELL = [
   './',
   './index.html',

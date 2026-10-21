@@ -436,10 +436,11 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  top: calc(14px + env(safe-area-inset-top, 0px));
   transform: translateX(-50%);
   z-index: 40;
   max-width: calc(100% - 32px);
+  display: flex; align-items: center; gap: 12px;
   background: var(--ink);
   color: var(--sheet);
   border-radius: 999px;
@@ -447,6 +448,43 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
   font-size: 14px;
   box-shadow: var(--shadow);
 }
+.toast:has(button) { padding-right: 8px; }
+.toast button {
+  flex: none;
+  background: transparent;
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 2px 12px;
+  font-size: 13px;
+}
+
+/* Small helpers in the pane footers and heads */
+.foot-left { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; min-width: 0; }
+.count .warn { color: var(--zhu); }
+.suggest {
+  background: var(--jade-tint);
+  color: var(--jade);
+  border: 1px dashed var(--jade);
+  border-radius: 999px;
+  padding: 1px 10px;
+  font-size: 12.5px;
+}
+.suggest:hover { border-style: solid; }
+.pager { display: inline-flex; align-items: center; gap: 2px; font-size: 12.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pager button {
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1;
+}
+.pager button:hover:not(:disabled) { background: var(--paper); }
+.pane.dropping { outline: 2px dashed var(--jade); outline-offset: -6px; }
+.pane.dropping textarea { background-color: var(--jade-tint); }
 
 @media (max-width: 900px) {
   .desk { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); min-height: 440px; }
@@ -462,6 +500,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
   .brand h1 { font-size: 22px; letter-spacing: .08em; }
   .top-actions { gap: 6px; flex-wrap: nowrap; }
   .top-actions .ghost { padding: 4px 10px; font-size: 13px; }
+  #installBtn { display: none; }
   .engine { padding: 4px 10px 4px 9px; font-size: 12px; white-space: nowrap; }
   .modes { gap: 6px; }
   .mode { align-items: center; text-align: center; padding: 6px 4px; }
@@ -508,6 +547,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     </div>
     <div class="top-actions">
       <button type="button" class="engine" id="engineBtn" data-state="pending">連線中</button>
+      <button type="button" class="ghost" id="installBtn" hidden>安裝 App</button>
       <button type="button" class="ghost" id="historyBtn">紀錄</button>
       <button type="button" class="ghost" id="settingsBtn">設定</button>
     </div>
@@ -541,7 +581,10 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
       </div>
       <textarea id="src" class="sheet-text" spellcheck="false" aria-labelledby="srcTitle"></textarea>
       <div class="pane-foot">
-        <span class="count" id="srcCount">0 字</span>
+        <div class="foot-left">
+          <span class="count" id="srcCount">0 字</span>
+          <button type="button" class="suggest" id="suggestBtn" hidden></button>
+        </div>
         <div class="run-wrap">
           <span class="kbd-hint" id="kbdHint">Ctrl + Enter</span>
           <button type="button" class="run" id="runBtn">潤飾</button>
@@ -554,6 +597,11 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
       <div class="pane-head">
         <h2 class="pane-title" id="outTitle">定稿 <small id="outHint"></small></h2>
         <div class="head-actions">
+          <div class="pager" id="pager" role="group" aria-label="版本" hidden>
+            <button type="button" id="verPrev" aria-label="上一版">‹</button>
+            <span id="verLabel"></span>
+            <button type="button" id="verNext" aria-label="下一版">›</button>
+          </div>
           <span class="status" id="status" aria-live="polite"></span>
           <div class="seg sm" id="viewSeg" role="group" aria-label="顯示方式">
             <button type="button" data-view="clean" aria-pressed="true">定稿</button>
@@ -572,7 +620,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
       <div class="pane-foot">
         <span class="count" id="outCount"></span>
         <div class="head-actions">
-          <button type="button" class="ghost sm" id="reuseBtn">以此為新稿</button>
+          <button type="button" class="ghost sm" id="reuseBtn" title="把結果放回原稿，可以換個模式再處理一次">以此為新稿</button>
           <button type="button" class="ghost sm strong" id="copyBtn">複製結果</button>
         </div>
       </div>
@@ -852,12 +900,24 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     return { hant: 'zh-Hant-TW', hans: 'zh-Hans-CN', ja: 'ja' }[script] || '';
   }
   const fmt = (n) => n.toLocaleString('zh-TW');
-  function countLabel(s) {
+  // Chinese is counted in characters (plus any Latin words); text that is mostly Latin is counted in words.
+  function countOf(s) {
     const han = (s.match(HAN_RE) || []).length;
     const words = (s.match(WORD_RE) || []).length;
-    if (!han && !words) return '';
-    if (han >= words) return '約 ' + fmt(han + words) + ' 字';
-    return fmt(words) + ' words';
+    const zh = han >= words;
+    return { zh, n: zh ? han + words : words, empty: !han && !words };
+  }
+  function countLabel(s) {
+    const c = countOf(s);
+    if (c.empty) return '';
+    return c.zh ? '約 ' + fmt(c.n) + ' 字' : fmt(c.n) + ' words';
+  }
+  function deltaLabel(before, after) {
+    const a = countOf(before), b = countOf(after);
+    if (a.empty || b.empty || a.zh !== b.zh) return '';
+    const d = b.n - a.n, unit = b.zh ? ' 字' : ' 詞';
+    if (!d) return '・與原稿同長';
+    return '・比原稿' + (d < 0 ? '少 ' : '多 ') + fmt(Math.abs(d)) + unit;
   }
 
   // ---------- diff (Myers, on characters for CJK and words for Latin) ----------
@@ -1013,6 +1073,8 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     variant: 'us', speed: 'default', notes: true, extra: '', view: 'clean',
     input: null,   // null means the example is showing
     result: null,
+    versions: [],  // earlier results for the same source and mode, oldest first; result is versions[vi]
+    vi: 0,
   };
   const saved = store.get(KEYS.state, null);
   const state = Object.assign({}, DEFAULTS, saved && typeof saved === 'object' ? saved : {});
@@ -1027,8 +1089,21 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
   if (typeof state.input !== 'string') state.input = null;
   const validResult = (r) => r && typeof r === 'object' && MODES[r.mode] && typeof r.input === 'string' && typeof r.output === 'string';
   if (!validResult(state.result)) state.result = null;
-  if (state.input === null) state.result = exampleResult(state.mode);
-  else if (state.result) state.result.status = { kind: 'done', text: '上次結果' };
+  function setResult(r) {
+    state.result = r;
+    state.versions = r && !r.example ? [r] : [];
+    state.vi = 0;
+  }
+  const savedVersions = Array.isArray(state.versions) ? state.versions.filter(validResult) : [];
+  if (state.input === null) {
+    setResult(exampleResult(state.mode));
+  } else if (savedVersions.length > 1 && Number.isInteger(state.vi) && savedVersions[state.vi]) {
+    state.versions = savedVersions;
+    state.result = savedVersions[state.vi];
+  } else {
+    setResult(state.result);
+  }
+  for (const v of state.versions) v.status = { kind: 'done', text: '上次結果' };
 
   let saveTimer = 0;
   function persist(now) {
@@ -1037,9 +1112,12 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
       mode: state.mode, tone: state.tone, level: state.level, variant: state.variant, speed: state.speed,
       notes: state.notes, extra: state.extra, view: state.view, input: state.input,
       result: state.result && !state.result.example ? state.result : null,
+      versions: state.versions.length > 1 ? state.versions : [],
+      vi: state.vi,
     });
     if (now) write(); else saveTimer = setTimeout(write, 350);
   }
+  window.addEventListener('pagehide', () => persist(true));
 
   // ---------- elements ----------
   const src = $('src'), out = $('out'), runBtn = $('runBtn'), stopBtn = $('stopBtn');
@@ -1095,50 +1173,118 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     $('srcHint').textContent = dir ? DIRS[dir].srcHint : MODES[state.mode].srcHint;
     $('variantOpt').hidden = dir !== 'zh2en';
   }
+  // Points out when the text clearly belongs in another mode, e.g. English pasted into 潤飾繁中.
+  function updateSuggest(text) {
+    const b = $('suggestBtn');
+    const sc = text.trim() ? scriptOf(text) : '';
+    let target = '', label = '';
+    if ((state.mode === 'tw' || state.mode === 'cn') && sc === 'latin') { target = 'en'; label = '這段是英文 → 改用中英互換'; }
+    else if (state.mode === 'cn' && sc === 'hans') { target = 'same'; label = '這段已是簡體 → 改用原語潤飾'; }
+    b.hidden = !target;
+    b.textContent = label;
+    b.dataset.target = target;
+  }
+  function updateSourceMeta(text) {
+    src.dataset.script = scriptOf(text);
+    updateDir(text);
+    updateSuggest(text);
+    const el = $('srcCount');
+    el.textContent = countLabel(text) || '0 字';
+    if (countOf(text).n > 6000) {
+      const w = document.createElement('span');
+      w.className = 'warn';
+      w.textContent = '・長文建議分段';
+      el.append(w);
+    }
+  }
   function renderSource() {
     const m = MODES[state.mode];
     const text = state.input === null ? EXAMPLES[state.mode].input : state.input;
     if (src.value !== text) src.value = text;
-    src.placeholder = m.placeholder;
-    src.dataset.script = scriptOf(text);
-    updateDir(text);
-    $('srcCount').textContent = countLabel(text) || '0 字';
+    src.placeholder = m.placeholder + '\n也可以把 .txt 或 .md 檔拖進來。';
+    updateSourceMeta(text);
     runBtn.textContent = m.run;
   }
   src.addEventListener('input', () => {
     state.input = src.value;
-    src.dataset.script = scriptOf(src.value);
-    updateDir(src.value);
-    $('srcCount').textContent = countLabel(src.value) || '0 字';
+    updateSourceMeta(src.value);
     persist();
   });
-  $('clearBtn').addEventListener('click', () => {
-    state.input = '';
-    if (state.result && state.result.example) state.result = null;
+  // Replaces the draft and offers to put the old one back.
+  function replaceSource(text, message) {
+    const before = { input: state.input, result: state.result, versions: state.versions, vi: state.vi };
+    state.input = text;
+    if (state.result && state.result.example) setResult(null);
     hideMsg();
     renderSource(); renderOut(); persist(true);
+    toast(message, ['復原', () => {
+      Object.assign(state, before);
+      renderSource(); renderOut(); persist(true);
+    }]);
+  }
+  $('clearBtn').addEventListener('click', () => {
+    if (!src.value) return;
+    replaceSource('', '已清除原稿');
     src.focus();
   });
   $('sampleBtn').addEventListener('click', () => {
     if (busy) return;
     state.input = null;
-    state.result = exampleResult(state.mode);
+    setResult(exampleResult(state.mode));
     hideMsg();
     renderSource(); renderOut(); persist(true);
   });
+  $('suggestBtn').addEventListener('click', (e) => switchMode(e.currentTarget.dataset.target));
+
+  // Drop a .txt or .md file onto the source pane to load it.
+  const srcPane = src.closest('.pane');
+  const isFileDrag = (e) => Array.from((e.dataTransfer && e.dataTransfer.types) || []).includes('Files');
+  window.addEventListener('dragover', (e) => { if (isFileDrag(e)) e.preventDefault(); });
+  window.addEventListener('drop', (e) => { if (isFileDrag(e)) e.preventDefault(); });
+  srcPane.addEventListener('dragover', (e) => { if (isFileDrag(e)) srcPane.classList.add('dropping'); });
+  srcPane.addEventListener('dragleave', (e) => { if (!srcPane.contains(e.relatedTarget)) srcPane.classList.remove('dropping'); });
+  srcPane.addEventListener('drop', async (e) => {
+    srcPane.classList.remove('dropping');
+    if (!isFileDrag(e) || busy) return;
+    const f = e.dataTransfer.files[0];
+    if (!f) return;
+    if (!/^text\//.test(f.type) && !/\.(txt|md|markdown|csv|srt|vtt)$/i.test(f.name)) { toast('只能讀取純文字檔，例如 .txt 或 .md。'); return; }
+    if (f.size > 2000000) { toast('檔案太大，請分段貼上。'); return; }
+    try {
+      replaceSource((await f.text()).replace(/\r\n/g, '\n'), '已載入「' + f.name + '」');
+    } catch {
+      toast('無法讀取這個檔案。');
+    }
+  });
 
   // ---------- modes ----------
+  const MODE_KEYS = ['tw', 'cn', 'en', 'same'];
+  const tabs = Array.from(document.querySelectorAll('.mode'));
   function renderTabs() {
-    for (const t of document.querySelectorAll('.mode')) t.setAttribute('aria-selected', String(t.dataset.mode === state.mode));
+    for (const t of tabs) {
+      const on = t.dataset.mode === state.mode;
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+    }
   }
-  for (const t of document.querySelectorAll('.mode')) {
-    t.addEventListener('click', () => {
-      if (t.dataset.mode === state.mode) return;
-      state.mode = t.dataset.mode;
-      if (state.input === null && !busy) state.result = exampleResult(state.mode);
-      renderTabs(); renderOptions(); renderSource(); renderOut(); persist();
+  function switchMode(m) {
+    if (!MODES[m] || m === state.mode) return;
+    state.mode = m;
+    if (state.input === null && !busy) setResult(exampleResult(m));
+    renderTabs(); renderOptions(); renderSource(); renderOut(); persist();
+  }
+  tabs.forEach((t, i) => {
+    t.title = (isMac ? '⌘' : 'Ctrl + ') + (i + 1);
+    t.addEventListener('click', () => switchMode(t.dataset.mode));
+    t.addEventListener('keydown', (e) => {
+      const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      const next = tabs[(i + d + tabs.length) % tabs.length];
+      next.focus();
+      switchMode(next.dataset.mode);
     });
-  }
+  });
 
   // ---------- output pane ----------
   let busy = false, phase = '';
@@ -1184,9 +1330,17 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
     $('notes').hidden = !items.length;
     $('notesTitle').textContent = NOTES_TITLE[m.kind];
     $('notesList').replaceChildren(...items.map((t) => { const li = document.createElement('li'); li.textContent = t; return li; }));
-    $('outCount').textContent = hasOut ? countLabel(r.output) : '';
+    $('outCount').textContent = hasOut ? countLabel(r.output) + (m.diff && !busy ? deltaLabel(r.input, r.output) : '') : '';
     $('copyBtn').disabled = !hasOut || busy;
     $('reuseBtn').disabled = !hasOut || busy;
+
+    const n = state.versions.length;
+    $('pager').hidden = n < 2 || busy;
+    if (n > 1) {
+      $('verLabel').textContent = '第 ' + (state.vi + 1) + '／' + n + ' 版';
+      $('verPrev').disabled = state.vi === 0;
+      $('verNext').disabled = state.vi === n - 1;
+    }
 
     if (!busy) {
       if (r && r.example) setStatus('example', '範例');
@@ -1197,6 +1351,15 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
   for (const b of viewSeg.children) {
     b.addEventListener('click', () => { state.view = b.dataset.view; renderOut(); persist(); });
   }
+  function showVersion(i) {
+    if (busy || !state.versions[i]) return;
+    state.vi = i;
+    state.result = state.versions[i];
+    hideMsg();
+    renderOut(); persist(true);
+  }
+  $('verPrev').addEventListener('click', () => showVersion(state.vi - 1));
+  $('verNext').addEventListener('click', () => showVersion(state.vi + 1));
 
   function showMsg(text, kind, actions) {
     msgEl.dataset.kind = kind || 'error';
@@ -1213,11 +1376,22 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
   function hideMsg() { msgEl.hidden = true; msgEl.replaceChildren(); }
 
   let toastTimer = 0;
-  function toast(text) {
+  // action: optional [label, fn], e.g. ['復原', undo]; the toast then stays up a little longer.
+  function toast(text, action) {
     const t = $('toast');
-    t.textContent = text; t.hidden = false;
+    const span = document.createElement('span');
+    span.textContent = text;
+    t.replaceChildren(span);
+    if (action) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = action[0];
+      b.addEventListener('click', () => { t.hidden = true; action[1](); });
+      t.append(b);
+    }
+    t.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+    toastTimer = setTimeout(() => { t.hidden = true; }, action ? 6000 : 2600);
   }
 
   $('copyBtn').addEventListener('click', () => {
@@ -1238,10 +1412,8 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
   $('reuseBtn').addEventListener('click', () => {
     const r = state.result;
     if (!r || !r.output || busy) return;
-    state.input = r.output;
-    renderSource(); persist(true);
+    replaceSource(r.output, '已把結果放回原稿');
     src.focus();
-    toast('已把結果放回原稿，可以換個模式再處理一次。');
   });
 
   // ---------- engines ----------
@@ -1393,7 +1565,13 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
 
     hideMsg();
     if (state.input === null) state.input = text;
+    // Running the same text in the same mode again adds a version instead of replacing the last result.
+    const prev = state.result;
+    const kept = prev && !prev.example && prev.output && prev.mode === mode && prev.input === text
+      ? (state.versions.length ? state.versions.slice() : [prev]) : [];
     const r = { mode, input: text, output: '', notes: '', example: false, at: Date.now() };
+    state.versions = kept.concat(r).slice(-5);
+    state.vi = state.versions.length - 1;
     state.result = r;
     busy = true; phase = 'thinking';
     runBtn.hidden = true; stopBtn.hidden = false;
@@ -1449,6 +1627,12 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
         if (e && e.code === 'http' && e.status === 401) actions.push(['開啟設定', () => openOverlay('settingsOverlay')]);
         showMsg(errorText(e), 'error', actions);
       }
+      // Nothing came back: go back to the version that was showing before.
+      if (!r.output && kept.length) {
+        state.versions = kept.slice(-5);
+        state.vi = state.versions.length - 1;
+        state.result = state.versions[state.vi];
+      }
     } finally {
       clearInterval(timer);
       busy = false; phase = ''; ctl = null;
@@ -1500,7 +1684,7 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
         if (busy) return;
         state.mode = it.mode;
         state.input = it.input;
-        state.result = { mode: it.mode, input: it.input, output: it.output, notes: it.notes || '', example: false, at: it.at, status: { kind: 'done', text: '紀錄 · ' + when(it.at || 0) } };
+        setResult({ mode: it.mode, input: it.input, output: it.output, notes: it.notes || '', example: false, at: it.at, status: { kind: 'done', text: '紀錄 · ' + when(it.at || 0) } });
         hideMsg();
         renderTabs(); renderOptions(); renderSource(); renderOut(); persist(true);
         src.scrollTop = 0; $('outScroll').scrollTop = 0;
@@ -1554,7 +1738,31 @@ textarea.sheet-text::placeholder { color: var(--ink-soft); opacity: .75; }
 
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); if (!openId) run(); }
+    else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && /^[1-4]$/.test(e.key) && !openId) {
+      e.preventDefault();
+      switchMode(MODE_KEYS[Number(e.key) - 1]);
+    }
     else if (e.key === 'Escape') { if (openId) closeOverlay(); else if (busy) stop(); }
+  });
+
+  // Browsers that can install the website as an app (Chrome, Edge) get an install button.
+  let installPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installPrompt = e;
+    $('installBtn').hidden = false;
+  });
+  window.addEventListener('appinstalled', () => {
+    installPrompt = null;
+    $('installBtn').hidden = true;
+    toast('已安裝，之後可以從桌面或應用程式清單開啟。');
+  });
+  $('installBtn').addEventListener('click', async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    try { await installPrompt.userChoice; } catch {}
+    installPrompt = null;
+    $('installBtn').hidden = true;
   });
 
   // ---------- first paint ----------
